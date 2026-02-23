@@ -1,1 +1,413 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>미니 컬링 - 브러시 & 파티클</title>
+  <style>
+    body {
+      margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      min-height: 100vh; background-color: #111827; font-family: 'Malgun Gothic', sans-serif;
+      touch-action: none; user-select: none;
+    }
 
+    #ui { text-align: center; color: white; margin-bottom: 12px; z-index: 10; }
+    #ui h1 { margin: 0 0 5px 0; font-size: 22px; }
+    #message { font-size: 16px; margin: 0 0 5px 0; color: #facc15; font-weight: bold; transition: color 0.1s;}
+    #attempts-info { font-size: 14px; color: #9ca3af; margin: 0; }
+
+    #app-container {
+      position: relative; width: 320px; height: 520px;
+      border: 4px solid #bfdbfe; border-radius: 12px; overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6); background-color: #e0f2fe;
+    }
+
+    #board {
+      position: absolute; top: 0; left: 0; width: 100%; height: 2400px;
+      will-change: transform;
+      background-image: 
+        repeating-linear-gradient(90deg, transparent, transparent 15px, rgba(255,255,255,0.4) 15px, rgba(255,255,255,0.4) 17px),
+        repeating-linear-gradient(90deg, transparent, transparent 38px, rgba(255,255,255,0.3) 38px, rgba(255,255,255,0.3) 40px),
+        repeating-linear-gradient(0deg, transparent, transparent 100px, rgba(147,197,253,0.3) 100px, rgba(147,197,253,0.3) 102px);
+    }
+
+    #target {
+      position: absolute; left: 50%; width: 280px; height: 280px; margin-left: -140px; 
+      border-radius: 50%; background-color: #3b82f6; 
+      display: flex; align-items: center; justify-content: center; box-shadow: inset 0 0 15px rgba(0,0,0,0.2);
+    }
+    .target-white { width: 180px; height: 180px; border-radius: 50%; background-color: white; display: flex; align-items: center; justify-content: center; }
+    .target-red { width: 100px; height: 100px; border-radius: 50%; background-color: #ef4444; display: flex; align-items: center; justify-content: center; }
+    .target-center { width: 30px; height: 30px; border-radius: 50%; background-color: white; }
+
+    .center-line { position: absolute; left: 50%; top: 0; width: 2px; height: 100%; background-color: rgba(239, 68, 68, 0.4); margin-left: -1px; }
+    #start-line { position: absolute; left: 0; width: 100%; height: 4px; background-color: #ef4444; }
+
+    #stone {
+      position: absolute; left: 50%; top: 0; width: 50px; height: 50px; margin-left: -25px;
+      border-radius: 50%; background-color: #facc15; border: 5px solid #4b5563;
+      box-sizing: border-box; box-shadow: 0 8px 12px rgba(0,0,0,0.5);
+      display: flex; align-items: center; justify-content: center;
+      will-change: transform; z-index: 5; cursor: pointer;
+    }
+    .stone-handle { width: 16px; height: 10px; background-color: #1f2937; border-radius: 3px; margin-bottom: 20px;}
+
+    #power-gauge {
+      position: absolute; left: 15px; bottom: 30px; width: 24px; height: 160px;
+      background-color: rgba(0, 0, 0, 0.5); border: 3px solid #fff; border-radius: 12px;
+      z-index: 15; overflow: hidden; display: flex; align-items: flex-end;
+    }
+    #power-fill { width: 100%; height: 0%; background: linear-gradient(to top, #4ade80, #facc15, #ef4444); transition: height 0.05s linear; }
+
+    /* [업데이트] 브러시 디자인 (스위핑 시 나타남) */
+    #broom {
+      position: absolute; width: 24px; height: 60px; pointer-events: none;
+      z-index: 30; display: none;
+      transform-origin: bottom center; /* 아랫부분(솔)을 축으로 회전 */
+      transition: transform 0.1s ease-out; /* 부드러운 기울기 전환 */
+    }
+    .broom-handle { width: 6px; height: 45px; background: #8B4513; margin: 0 auto; border-radius: 3px; box-shadow: inset -2px 0 0 rgba(0,0,0,0.2); }
+    .broom-head { width: 24px; height: 15px; background: #eab308; border-radius: 4px 4px 8px 8px; border-bottom: 4px solid #ca8a04; }
+
+    /* [업데이트] 스위핑 파티클 (얼음 조각 효과) */
+    .particle {
+      position: absolute; width: 6px; height: 6px; background: rgba(255,255,255,0.9);
+      border-radius: 50%; pointer-events: none; z-index: 25;
+      animation: sweepAnim 0.4s ease-out forwards;
+    }
+    @keyframes sweepAnim {
+      0% { transform: scale(1) translateY(0); opacity: 1; }
+      100% { transform: scale(1.5) translateY(-25px) translateX(var(--random-x)); opacity: 0; }
+    }
+
+    #overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7);
+      display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 40;
+    }
+    #overlay h2 { color: white; margin-bottom: 25px; font-size: 26px; text-align: center;}
+    #restart-btn {
+      padding: 15px 35px; background-color: #3b82f6; color: white; border: none; border-radius: 30px; 
+      font-size: 18px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    }
+    #restart-btn:active { transform: scale(0.95); }
+  </style>
+</head>
+<body>
+
+  <div id="ui">
+    <h1>미니 컬링</h1>
+    <p id="message">스톤을 당겨 파워를 조절하세요!</p>
+    <p id="attempts-info">남은 기회: <span id="attempts-count">3</span></p>
+  </div>
+
+  <div id="app-container">
+    <div id="board">
+      <div class="center-line"></div>
+      <div id="target"><div class="target-white"><div class="target-red"><div class="target-center"></div></div></div></div>
+      <div id="start-line"></div>
+      <div id="stone"><div class="stone-handle"></div></div>
+    </div>
+    
+    <div id="broom">
+      <div class="broom-handle"></div>
+      <div class="broom-head"></div>
+    </div>
+
+    <div id="power-gauge"><div id="power-fill"></div></div>
+    
+    <div id="overlay">
+      <h2 id="overlay-msg">게임 오버</h2>
+      <button id="restart-btn">다시 하기</button>
+    </div>
+  </div>
+
+  <script>
+    const BOARD_WIDTH = 320;
+    const BOARD_HEIGHT = 2400;
+    const CONTAINER_HEIGHT = 520;
+    const START_Y = 2000;
+    const TARGET_CENTER_Y = 400;
+    const TARGET_RADIUS = 50; 
+    const MAX_PULL = 150;
+    const FRICTION = 0.993; 
+    const SWEEP_FORWARD_FACTOR = 0.0003; 
+    const SWEEP_SIDE_FACTOR = 0.00015;   
+
+    const appContainer = document.getElementById('app-container');
+    const board = document.getElementById('board');
+    const target = document.getElementById('target');
+    const startLine = document.getElementById('start-line');
+    const stone = document.getElementById('stone');
+    const powerFill = document.getElementById('power-fill');
+    const messageEl = document.getElementById('message');
+    const attemptsCountEl = document.getElementById('attempts-count');
+    const overlay = document.getElementById('overlay');
+    const overlayMsg = document.getElementById('overlay-msg');
+    const restartBtn = document.getElementById('restart-btn');
+    
+    // [업데이트] 브러시 엘리먼트
+    const broom = document.getElementById('broom');
+
+    let attemptsLeft = 3;
+    let gameState = 'idle'; 
+    let animationId = null;
+
+    let stoneY = START_Y;
+    let stoneX = 0; 
+    let velocityY = 0;
+    let velocityX = 0;
+    let stoneRotation = 0;
+    let rotationSpeed = 0;
+    
+    let dragStartY = 0;
+    let isSweeping = false;
+    let lastSweepX = 0;
+    let lastSweepY = 0; 
+    let broomAngle = 0; // 브러시의 현재 각도
+
+    target.style.top = `${TARGET_CENTER_Y - 140}px`; 
+    startLine.style.top = `${START_Y}px`;
+
+    function renderPhysics(isDragging = false) {
+      const cameraFocusY = isDragging ? START_Y : stoneY;
+      let boardY = 350 - cameraFocusY;
+      
+      if (boardY > 0) boardY = 0;
+      if (boardY < -(BOARD_HEIGHT - CONTAINER_HEIGHT)) boardY = -(BOARD_HEIGHT - CONTAINER_HEIGHT);
+
+      board.style.transform = `translateY(${boardY}px)`;
+      stone.style.transform = `translate(${stoneX}px, ${stoneY}px) rotate(${stoneRotation}deg)`;
+    }
+
+    function resetStone() {
+      if (animationId) cancelAnimationFrame(animationId);
+      stoneY = START_Y;
+      stoneX = 0;
+      stoneRotation = 0;
+      velocityY = 0;
+      velocityX = 0;
+      rotationSpeed = 0;
+      powerFill.style.height = '0%';
+      gameState = 'idle';
+      isSweeping = false;
+      broom.style.display = 'none';
+      renderPhysics();
+    }
+
+    function getPointerPos(e) {
+      const clientX = e.type.includes('mouse') ? e.clientX : e.touches[0].clientX;
+      const clientY = e.type.includes('mouse') ? e.clientY : e.touches[0].clientY;
+      return { clientX, clientY };
+    }
+
+    // [업데이트] 파티클 생성 함수
+    function spawnParticle(x, y) {
+      const p = document.createElement('div');
+      p.className = 'particle';
+      // 빗자루 솔의 중심을 기준으로 파티클 생성
+      p.style.left = (x - 3) + 'px'; 
+      p.style.top = (y - 3) + 'px';
+      // 무작위로 좌우로 약간 흩날리게 함
+      const randomX = (Math.random() * 20 - 10) + 'px';
+      p.style.setProperty('--random-x', randomX);
+      
+      appContainer.appendChild(p);
+      setTimeout(() => p.remove(), 400); // 애니메이션 시간에 맞춰 삭제
+    }
+
+    function handleStart(e) {
+      if (gameState === 'idle') {
+        gameState = 'dragging';
+        messageEl.textContent = '게이지를 모으는 중...';
+        messageEl.style.color = '#facc15';
+        const pos = getPointerPos(e);
+        dragStartY = pos.clientY;
+        renderPhysics(true);
+      } 
+      else if (gameState === 'moving') {
+        isSweeping = true;
+        const pos = getPointerPos(e);
+        lastSweepX = pos.clientX;
+        lastSweepY = pos.clientY;
+        
+        // 브러시 등장 및 초기 위치 세팅
+        broom.style.display = 'block';
+        updateBroomPosition(pos);
+      }
+    }
+
+    function updateBroomPosition(pos) {
+      const rect = appContainer.getBoundingClientRect();
+      const touchX = pos.clientX - rect.left;
+      const touchY = pos.clientY - rect.top;
+      // 브러시가 마우스(터치) 위치 중앙에 오도록 좌표 설정
+      broom.style.left = (touchX - 12) + 'px'; // 빗자루 너비의 절반 
+      broom.style.top = (touchY - 60) + 'px';  // 솔부분이 터치 위치에 닿게
+      broom.style.transform = `rotate(${broomAngle}deg)`;
+    }
+
+    function handleMove(e) {
+      e.preventDefault(); 
+      const pos = getPointerPos(e);
+
+      if (gameState === 'dragging') {
+        let delta = pos.clientY - dragStartY;
+        if (delta < 0) delta = 0;
+        if (delta > MAX_PULL) delta = MAX_PULL;
+        stoneY = START_Y + delta;
+        powerFill.style.height = `${Math.round((delta / MAX_PULL) * 100)}%`;
+        renderPhysics(true);
+      } 
+      else if (gameState === 'moving' && isSweeping) {
+        const rect = appContainer.getBoundingClientRect();
+        const touchX = pos.clientX - rect.left;
+        const touchY = pos.clientY - rect.top;
+
+        const moveDistX = Math.abs(pos.clientX - lastSweepX);
+        const moveDistY = Math.abs(pos.clientY - lastSweepY);
+        const sweepActivity = Math.sqrt((moveDistX * moveDistX) + (moveDistY * moveDistY));
+
+        lastSweepX = pos.clientX;
+        lastSweepY = pos.clientY;
+
+        // 화면상 스톤 중심 위치 계산
+        let boardY = 350 - stoneY;
+        if (boardY > 0) boardY = 0;
+        if (boardY < -(BOARD_HEIGHT - CONTAINER_HEIGHT)) boardY = -(BOARD_HEIGHT - CONTAINER_HEIGHT);
+        const stoneCenterScreenX = (BOARD_WIDTH / 2) + stoneX;
+        const stoneCenterScreenY = stoneY + boardY + 25; 
+
+        let sweepMsg = '🧹 ';
+
+        if (sweepActivity > 0) {
+          // [업데이트] 브러시 위치와 파티클 생성
+          updateBroomPosition(pos);
+          if (sweepActivity > 2) spawnParticle(touchX, touchY);
+
+          // [업데이트] 빗자루 각도 판별 로직 추가
+          if (touchX < stoneCenterScreenX - 25) {
+            velocityX -= sweepActivity * SWEEP_SIDE_FACTOR; 
+            sweepMsg += '⬅️좌측';
+            broomAngle = -25; // 왼쪽으로 기울임
+          } else if (touchX > stoneCenterScreenX + 25) {
+            velocityX += sweepActivity * SWEEP_SIDE_FACTOR; 
+            sweepMsg += '➡️우측';
+            broomAngle = 25;  // 오른쪽으로 기울임
+          } else if (touchY < stoneCenterScreenY - 15) {
+            velocityY += sweepActivity * SWEEP_FORWARD_FACTOR; 
+            sweepMsg += '⬆️연장 ';
+            broomAngle = 0;   // 중앙(앞쪽)은 일자로 세움
+          }
+
+          messageEl.textContent = sweepMsg === '🧹 ' ? '🧹 방향을 잡으세요!' : sweepMsg;
+          messageEl.style.color = '#fb923c';
+        }
+      }
+    }
+
+    function handleEnd() {
+      if (gameState === 'dragging') {
+        gameState = 'moving';
+        messageEl.textContent = '발사! 화면을 문질러 스위핑하세요!';
+        messageEl.style.color = '#60a5fa';
+        powerFill.style.height = '0%'; 
+        
+        const pulledDistance = stoneY - START_Y;
+        velocityY = pulledDistance * 0.082; 
+        
+        const randomDirection = Math.random() < 0.5 ? -1 : 1;
+        velocityX = randomDirection * (Math.random() * 0.15 + 0.1); 
+        
+        rotationSpeed = velocityX * 2.5; 
+        animateLoop();
+      } 
+      else if (gameState === 'moving') {
+        isSweeping = false;
+        broom.style.display = 'none'; // 스위핑 멈추면 브러시 감추기
+        messageEl.textContent = '스톤이 굴러갑니다...';
+        messageEl.style.color = '#93c5fd';
+      }
+    }
+
+    function animateLoop() {
+      velocityY *= FRICTION;
+      velocityX *= FRICTION; 
+      
+      stoneY -= velocityY; 
+      stoneX += velocityX; 
+      stoneRotation += rotationSpeed; 
+
+      const maxStoneX = (BOARD_WIDTH / 2) - 25; 
+      if (stoneX > maxStoneX) { stoneX = maxStoneX; velocityX = 0; }
+      if (stoneX < -maxStoneX) { stoneX = -maxStoneX; velocityX = 0; }
+      
+      renderPhysics(false);
+
+      if (velocityY < 0.15 && Math.abs(velocityX) < 0.15) {
+        evaluateResult();
+        return;
+      }
+      animationId = requestAnimationFrame(animateLoop);
+    }
+
+    function evaluateResult() {
+      gameState = 'result';
+      broom.style.display = 'none';
+      
+      const stoneCenterY = stoneY + 25; 
+      const dx = stoneX - 0; 
+      const dy = stoneCenterY - TARGET_CENTER_Y;
+      const distance = Math.sqrt((dx * dx) + (dy * dy)); 
+      
+      if (distance <= TARGET_RADIUS) {
+        messageEl.textContent = '🎉 굿샷! 게임 클리어!';
+        messageEl.style.color = '#4ade80';
+        setTimeout(() => endGame(true), 1200);
+      } else {
+        attemptsLeft--;
+        attemptsCountEl.textContent = attemptsLeft;
+        
+        if (attemptsLeft > 0) {
+          messageEl.textContent = '아깝습니다! 다시 시도하세요.';
+          messageEl.style.color = '#f87171';
+          setTimeout(() => {
+            resetStone();
+            messageEl.textContent = '스톤을 당겨 파워를 조절하세요!';
+            messageEl.style.color = '#facc15';
+          }, 1500);
+        } else {
+          messageEl.textContent = '기회를 모두 소진했습니다.';
+          messageEl.style.color = '#ef4444';
+          setTimeout(() => endGame(false), 1200);
+        }
+      }
+    }
+
+    function endGame(isClear) {
+      gameState = 'end';
+      overlayMsg.innerHTML = isClear ? '✨ 게임 클리어! ✨' : '💀 게임 오버 💀';
+      overlayMsg.style.color = isClear ? '#facc15' : '#f87171';
+      overlay.style.display = 'flex';
+    }
+
+    restartBtn.addEventListener('click', () => {
+      attemptsLeft = 3;
+      attemptsCountEl.textContent = attemptsLeft;
+      overlay.style.display = 'none';
+      resetStone();
+      messageEl.textContent = '스톤을 당겨 파워를 조절하세요!';
+      messageEl.style.color = '#facc15';
+    });
+
+    appContainer.addEventListener('mousedown', handleStart);
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleEnd);
+
+    appContainer.addEventListener('touchstart', handleStart, { passive: false });
+    document.addEventListener('touchmove', handleMove, { passive: false });
+    document.addEventListener('touchend', handleEnd);
+
+    resetStone();
+  </script>
+</body>
+</html>

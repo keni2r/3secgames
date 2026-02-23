@@ -1,1 +1,568 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SEC RUN: ASCENSION</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0; padding: 0; overflow: hidden; 
+            background-color: #05080a; 
+            touch-action: none; 
+            font-family: 'Press Start 2P', cursive;
+            user-select: none;
+        }
+        canvas { display: block; }
+        
+        #ui {
+            position: absolute; top: 20px; left: 20px;
+            color: #5ce65c; text-shadow: 2px 2px 0px #000;
+            pointer-events: none; z-index: 10;
+        }
+        #stageName { font-size: 18px; margin-bottom: 10px; }
+        #timer { font-size: 12px; margin-bottom: 5px; }
+        #deathCounter { font-size: 10px; color: #ffeb3b; }
 
+        #resultUI {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(5, 8, 10, 0.9);
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            color: #5ce65c; text-align: center; z-index: 20;
+        }
+        #resTitle { font-size: 28px; margin-bottom: 10px; text-shadow: 2px 2px 0px #000; }
+        #resMessage { font-size: 12px; margin-bottom: 30px; line-height: 1.5; color: #fff; font-family: sans-serif; font-weight: bold;}
+        .stat-line { font-size: 14px; margin: 10px 0; line-height: 1.5; font-family: 'Press Start 2P', cursive;}
+        .highlight { color: #ffeb3b; }
+        
+        .btn {
+            pointer-events: auto;
+            background: #05080a; color: #5ce65c;
+            border: 4px solid #1e4d25;
+            padding: 15px 30px; margin-top: 30px;
+            font-size: 16px; font-family: 'Press Start 2P', cursive;
+            cursor: pointer; text-transform: uppercase;
+            box-shadow: 4px 4px 0px #000;
+            transition: transform 0.1s;
+        }
+        .btn:active { transform: scale(0.95); background: #1e4d25; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <div id="stageName">LV 1: STREETS</div>
+    <div id="timer">TIME: 0.0</div>
+    <div id="deathCounter">DEATHS: 0</div>
+</div>
+
+<div id="resultUI">
+    <h1 id="resTitle">SIGNAL LOST</h1>
+    <p id="resMessage">CRASHED INTO OBSTACLE</p>
+    <div class="stat-line">STAGE: <span id="resStage" class="highlight"></span></div>
+    <div class="stat-line">SURVIVED: <span id="resTime" class="highlight"></span></div>
+    <div class="stat-line">DEATHS: <span id="resDeaths" class="highlight"></span></div>
+    <button class="btn" onclick="restartGame()">다시하기 (REBOOT)</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const ui = {
+        stageName: document.getElementById('stageName'),
+        timer: document.getElementById('timer'),
+        deaths: document.getElementById('deathCounter'),
+        resultPanel: document.getElementById('resultUI'),
+        resTitle: document.getElementById('resTitle'),
+        resMessage: document.getElementById('resMessage'),
+        resStage: document.getElementById('resStage'),
+        resTime: document.getElementById('resTime'),
+        resDeaths: document.getElementById('resDeaths')
+    };
+
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // --- 컬러 팔레트 ---
+    const C_BG_DARK = "#05080a";
+    const C_BG_SKY = "#1a3a5a";
+    const C_KEY = "#5ce65c"; 
+    const C_DARK_KEY = "#1e4d25"; 
+    const C_ACCENT = "#ffeb3b"; 
+    const C_CHAR_HAIR = "#2a52be";
+    const C_CHAR_SKIN = "#ffdbac";
+    const C_CHAR_PINK = "#ff69b4";
+    const C_CHAR_WHITE = "#ffffff";
+    const C_SAT_GOLD = "#ffd700";
+    const C_SAT_BLUE = "#87ceeb";
+
+    const pixelSize = 3;
+    const startGroundY = 10000; 
+
+    function parseStr(arr) { return arr.map(r => r.split('').map(c => parseInt(c))); }
+
+    // --- 캐릭터 스프라이트 (16x16, 8프레임) ---
+    const runFramesStr = [
+        ["0000011111000000","0000111111100000","0000111111100000","0000011111000000","0000022222000000","0000033333000000","0000443334400000","0004433333440000","0000033333000000","0000033333000000","0000033333000000","0000033033000000","0000033033000000","0000033033000000","0000333033300000","0000444044400000"],
+        ["0000011111000000","0000111111100000","0000111111100000","0000011111000000","0000022222000000","0000033333000000","0000443334400000","0004433333440000","0000033333000000","0000033333000000","0000033333000000","0000033033000000","0000333033300000","0003330003330000","0033300000333000","0044400000444000"],
+        ["0000011111000000","0000111111100000","0000111111100000","0000011111000000","0000022222000000","0000033333000000","0000443334400000","0004433333440000","0000033333000000","0000033333000000","0000033333000000","0000033033000000","0000333033300000","0003300033000000","0033000033000000","0044000044000000"],
+        ["0000011111000000","0000111111100000","0000111111100000","0000011111000000","0000022222000000","0000033333000000","0000443334400000","0004433333440000","0000033333000000","0000033333000000","0000033333000000","0000033033000000","0000333033000000","0003330033000000","0003300033000000","0004400044000000"],
+        ["0000011111000000","0000111111100000","0000111111100000","0000011111000000","0000022222000000","0000033333000000","0000443334400000","0004433333440000","0000033333000000","0000033333000000","0000033333000000","0000033033000000","0000333033000000","0000330033000000","0000330033000000","0000440044000000"],
+        ["0000011111000000","0000111111100000","0000111111100000","0000011111000000","0000022222000000","0000033333000000","0000443334400000","0004433333440000","0000033333000000","0000033333000000","0000033333000000","0000033033000000","0000330033000000","0000330033300000","0000330003330000","0000440004440000"],
+        ["0000011111000000","0000111111100000","0000111111100000","0000011111000000","0000022222000000","0000033333000000","0000443334400000","0004433333440000","0000033333000000","0000033333000000","0000033333000000","0000033033000000","0000330033300000","0000330003300000","0000330003300000","0000440004400000"],
+        ["0000011111000000","0000111111100000","0000111111100000","0000011111000000","0000022222000000","0000033333000000","0000443334400000","0004433333440000","0000033333000000","0000033333000000","0000033333000000","0000033033000000","0000330033300000","0000330033000000","0000330033000000","0000440044000000"]
+    ];
+    const jumpFramesStr = [
+        "0000011111000000",
+        "0000111111100000",
+        "0000111111100000",
+        "0000011111000000",
+        "0000022222000000",
+        "0000033333000000",
+        "0000443334400000",
+        "0004433333440000",
+        "0000033333000000",
+        "0000033333000000",
+        "0000033333000000",
+        "0000033033000000",
+        "0000333033000000",
+        "0003330033000000",
+        "0033300330000000",
+        "0044400440000000"
+    ];
+
+    const runAnim = runFramesStr.map(parseStr);
+    const jumpSprite = parseStr(jumpFramesStr);
+
+    // --- 비행기 스프라이트 (16x5) ---
+    const planeSprite = parseStr([
+        "0000000011110000",
+        "0000001111111100",
+        "0011111111111111",
+        "1111111111111111",
+        "0001111110000000"
+    ]);
+
+    // --- 인공위성 스프라이트 (24x12) ---
+    const satelliteSprite = parseStr([
+        "000000000111000000000000",
+        "000000001111100000000000",
+        "000000011111110000000000",
+        "002222211111112222200300",
+        "022222211111112222220300",
+        "022222211111112222223330",
+        "022222211111112222220300",
+        "002222211111112222200300",
+        "000000011111110000000000",
+        "000000001111100000000000",
+        "000000000111000000000000",
+        "000000000000000000000000"
+    ]);
+
+    // --- 구름 스프라이트 (16x8) ---
+    const cloudSprite = parseStr([
+        "0000111111000000",
+        "0011111111110000",
+        "0111111111111100",
+        "1111111111111110",
+        "1111122111111111",
+        "0111222211111110",
+        "0011222211111100",
+        "0000111111000000"
+    ]);
+
+    // --- ★ 밸런스 패치: 7단계(구름), 8단계(비행기) 난이도 완화 ---
+    const stages = [
+        { name: "LV 1: STREETS", type: "manhole", bgType: "ground", gap: [60, 100], w: [400, 600], elevation: 0 },
+        { name: "LV 2: TRAFFIC", type: "car", bgType: "ground", gap: [0, 0], w: [500, 800], elevation: 0 },
+        { name: "LV 3: LOW BLDGS", type: "building", bgType: "ground", gap: [60, 110], w: [300, 500], elevation: 40 },
+        { name: "LV 4: MID BLDGS", type: "building", bgType: "ground", gap: [80, 130], w: [250, 400], elevation: 60 },
+        { name: "LV 5: HIGH BLDGS", type: "building", bgType: "ground", gap: [90, 140], w: [200, 300], elevation: 75 },
+        { name: "LV 6: SKYSCRAPERS", type: "skyscraper", bgType: "ground", gap: [100, 150], w: [150, 250], elevation: 90 },
+        // [업데이트] LV 7 구름: 간격을 줄이고 발판을 넓혀 안전하게 안착하도록 유도
+        { name: "LV 7: CLOUDS", type: "floating", bgType: "sky", sprite: cloudSprite, gap: [90, 140], w: [150, 220], elevation: 60 },
+        // [업데이트] LV 8 비행기: 9단계(위성)로 가기 전 쉬어가는 '안전 지대' 느낌으로 가장 넓은 발판 제공
+        { name: "LV 8: AIRPLANES", type: "airplane", bgType: "space", sprite: planeSprite, gap: [80, 130], w: [180, 250], elevation: 40 },
+        // LV 9 인공위성: 마지막 가장 어려운 난이도 유지
+        { name: "LV 9: SATELLITES", type: "satellite", bgType: "space", sprite: satelliteSprite, gap: [130, 180], w: [100, 150], elevation: 90 }
+    ];
+
+    const stageDuration = 8; 
+    const baseSpeed = 5.5; 
+
+    // 히트박스: 가로 24px, 세로 48px
+    const player = {
+        x: 100, y: startGroundY - 48, w: 24, h: 48, 
+        dy: 0, gravity: 0.8, jumpPower: -14.5, isGrounded: false
+    };
+
+    let platforms = [];
+    let obstacles = []; 
+    let particles = [];
+    let gameTime = 0;
+    let frames = 0;
+    let currentStageIndex = 0;
+    let isGameOver = false;
+    let isGameClear = false;
+    let totalDeaths = 0; 
+    let cameraY = 0;
+    
+    let stars = Array.from({length: 150}, () => ({x: Math.random()*canvas.width, y: Math.random()*canvas.height, size: Math.random()*2}));
+    let bgClouds = Array.from({length: 20}, () => ({x: Math.random()*canvas.width, y: Math.random()*canvas.height, speed: 0.5 + Math.random()}));
+
+    function initGame() {
+        platforms = [{ x: 0, y: startGroundY, w: canvas.width * 2, h: 800, type: 'ground' }];
+        obstacles = [];
+        particles = [];
+        player.y = startGroundY - 48;
+        player.dy = 0;
+        gameTime = 0;
+        frames = 0;
+        currentStageIndex = 0;
+        isGameOver = false;
+        isGameClear = false;
+        cameraY = startGroundY - canvas.height + 200;
+        
+        ui.resultPanel.style.display = 'none';
+        ui.deaths.innerText = `DEATHS: ${totalDeaths}`;
+    }
+
+    window.restartGame = function() { initGame(); };
+
+    function jump(e) {
+        if (e && e.target && e.target.tagName === 'BUTTON') return;
+        if (isGameOver || isGameClear) return; 
+        if (player.isGrounded) {
+            player.dy = player.jumpPower;
+            player.isGrounded = false;
+        }
+    }
+
+    window.addEventListener('mousedown', jump);
+    window.addEventListener('touchstart', (e) => { 
+        if(e.target.tagName !== 'BUTTON') e.preventDefault(); 
+        jump(e); 
+    }, {passive: false});
+    window.addEventListener('keydown', (e) => { if(e.code === 'Space') jump(); });
+
+    function random(min, max) { return min + Math.random() * (max - min); }
+
+    function generateWorld(stage) {
+        let lastPlat = platforms[platforms.length - 1];
+        
+        if (lastPlat.x + lastPlat.w < canvas.width + 500) {
+            let curGap = random(stage.gap[0], stage.gap[1]);
+            let curW = random(stage.w[0], stage.w[1]);
+            if (curW < 80) curW = 80; 
+
+            let nextX = lastPlat.x + lastPlat.w + curGap;
+            let curElev = random(stage.elevation * 0.5, stage.elevation);
+            if (curElev > 90) curElev = 90; 
+            let nextY = lastPlat.y - curElev; 
+
+            if (stage.type === "car") {
+                nextY = startGroundY; 
+                platforms.push({ x: nextX, y: nextY, w: curW, h: 800, type: 'ground' });
+                if (Math.random() > 0.4) {
+                    obstacles.push({ x: nextX + curW/2, y: nextY, w: 120, h: 50, type: 'car' });
+                }
+            } 
+            else if (stage.type === "ground" || stage.type === "building" || stage.type === "skyscraper") {
+                let buildingWindows = [];
+                if (stage.type === "building" || stage.type === "skyscraper") {
+                    for (let wx = 10; wx < curW - 20; wx += 25) {
+                        for (let wy = 20; wy < 800; wy += 40) {
+                            buildingWindows.push({ dx: wx, dy: wy, isOn: Math.random() > 0.8 });
+                        }
+                    }
+                }
+                platforms.push({ x: nextX, y: nextY, w: curW, h: 800, type: stage.type, windows: buildingWindows });
+            }
+            else if (["floating", "airplane", "satellite"].includes(stage.type)) {
+                platforms.push({ x: nextX, y: nextY, w: curW, h: 30, type: stage.type, sprite: stage.sprite });
+            } else {
+                platforms.push({ x: nextX, y: nextY, w: curW, h: 20, type: stage.type });
+            }
+        }
+    }
+
+    function triggerGameOver() {
+        if (!isGameOver && !isGameClear) {
+            isGameOver = true;
+            totalDeaths++;
+            ui.deaths.innerText = `DEATHS: ${totalDeaths}`;
+            
+            ui.resTitle.innerText = "SIGNAL LOST";
+            ui.resTitle.style.color = "#ff3b30";
+            ui.resMessage.innerText = "벽에 부딪히거나 추락하여 사망했습니다.";
+            ui.resStage.innerText = stages[currentStageIndex].name;
+            ui.resTime.innerText = `${gameTime.toFixed(1)}s`;
+            ui.resDeaths.innerText = totalDeaths;
+            ui.resultPanel.style.display = 'flex';
+        }
+    }
+
+    function triggerGameClear() {
+        if (!isGameOver && !isGameClear) {
+            isGameClear = true;
+            
+            ui.resTitle.innerText = "SYSTEM CLEARED";
+            ui.resTitle.style.color = "#5ce65c";
+            ui.resMessage.innerText = "축하합니다. 이 게임을 완벽하게 클리어 했습니다!";
+            ui.resStage.innerText = "ALL STAGES COMPLETED";
+            ui.resTime.innerText = `${gameTime.toFixed(1)}s`;
+            ui.resDeaths.innerText = totalDeaths;
+            ui.resultPanel.style.display = 'flex';
+        }
+    }
+
+    function update() {
+        if (isGameOver || isGameClear) return;
+        frames++;
+        gameTime += 1 / 60;
+        ui.timer.innerText = `TIME: ${gameTime.toFixed(1)}`;
+
+        let exactLevel = gameTime / stageDuration;
+        
+        if (Math.floor(exactLevel) >= stages.length) {
+            triggerGameClear();
+            return;
+        }
+
+        if (Math.floor(exactLevel) > currentStageIndex) {
+            currentStageIndex = Math.floor(exactLevel);
+            particles.push({ text: "ELEVATION UP!", x: player.x, y: player.y - 40, life: 60 });
+        }
+        
+        let stage = stages[currentStageIndex];
+        ui.stageName.innerText = stage.name;
+        
+        let currentSpeed = baseSpeed * Math.pow(1.05, exactLevel);
+
+        player.dy += player.gravity;
+        let prevYBottom = player.y + player.h - player.dy;
+        player.y += player.dy;
+        player.isGrounded = false;
+
+        for (let i = platforms.length - 1; i >= 0; i--) {
+            let p = platforms[i];
+            p.x -= currentSpeed;
+
+            let isXOverlap = (player.x + player.w > p.x + 5) && (player.x < p.x + p.w - 5);
+            if (isXOverlap) {
+                if (player.dy >= 0 && prevYBottom <= p.y + 15 && player.y + player.h >= p.y) {
+                    player.isGrounded = true;
+                    player.dy = 0;
+                    player.y = p.y - player.h; 
+                }
+                else if (!["floating", "airplane", "satellite"].includes(p.type) && player.y + player.h > p.y + 20) {
+                    triggerGameOver();
+                }
+            }
+            if (p.x + p.w < -200) platforms.splice(i, 1);
+        }
+
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+            let o = obstacles[i];
+            o.x -= currentSpeed;
+            let oTop = o.y - o.h; 
+
+            let isXOverlap = (player.x + player.w > o.x) && (player.x < o.x + o.w);
+            if (isXOverlap) {
+                if (player.dy >= 0 && prevYBottom <= oTop + 15 && player.y + player.h >= oTop) {
+                    player.isGrounded = true;
+                    player.dy = 0;
+                    player.y = oTop - player.h;
+                }
+                else if (player.y + player.h > oTop + 10) {
+                    triggerGameOver();
+                }
+            }
+            if (o.x + o.w < -200) obstacles.splice(i, 1);
+        }
+
+        generateWorld(stage);
+
+        if (player.y > cameraY + canvas.height + 100) triggerGameOver();
+
+        for (let i = particles.length - 1; i >= 0; i--) {
+            particles[i].y -= 1; particles[i].life--;
+            if (particles[i].life <= 0) particles.splice(i, 1);
+        }
+
+        let targetCameraY = player.y - canvas.height * 0.7;
+        cameraY += (targetCameraY - cameraY) * 0.2; 
+
+        bgClouds.forEach(c => {
+            c.x -= c.speed;
+            if(c.x < -50) c.x = canvas.width + 50;
+        });
+    }
+
+    // --- 렌더링 함수 ---
+    function drawPixelSprite(sprite, x, y, scale = pixelSize, isCentered = true) {
+        let spriteW = sprite[0].length * scale;
+        let spriteH = sprite.length * scale;
+        let drawX = x;
+        let drawY = y;
+
+        if (isCentered) {
+             drawX = x + (player.w - spriteW) / 2;
+             drawY = y + player.h - spriteH;
+        }
+
+        for (let r = 0; r < sprite.length; r++) {
+            for (let c = 0; c < sprite[r].length; c++) {
+                let colorCode = sprite[r][c];
+                if (colorCode === 0) continue;
+                
+                if (sprite === satelliteSprite) {
+                    if (colorCode === 1) ctx.fillStyle = C_SAT_GOLD;
+                    else if (colorCode === 2) ctx.fillStyle = C_SAT_BLUE;
+                    else if (colorCode === 3) ctx.fillStyle = C_CHAR_WHITE;
+                } else if (sprite === cloudSprite) {
+                    if (colorCode === 1) ctx.fillStyle = C_CHAR_WHITE;
+                    else if (colorCode === 2) ctx.fillStyle = "#d0d0d0";
+                } else if (sprite === planeSprite) {
+                    if (colorCode === 1) ctx.fillStyle = "#dddddd";
+                    else if (colorCode === 2) ctx.fillStyle = "#ff3b30";
+                } else { 
+                    // 플레이어 색상 (머리, 피부, 옷, 신발)
+                    if (colorCode === 1) ctx.fillStyle = C_CHAR_HAIR;
+                    else if (colorCode === 2) ctx.fillStyle = C_CHAR_SKIN;
+                    else if (colorCode === 3) ctx.fillStyle = C_CHAR_PINK;
+                    else if (colorCode === 4) ctx.fillStyle = C_CHAR_WHITE;
+                }
+
+                ctx.fillRect(drawX + c * scale, drawY + r * scale, scale, scale);
+            }
+        }
+    }
+
+    function drawBackground() {
+        let bgType = stages[currentStageIndex].bgType;
+        
+        if (bgType === 'ground') {
+             ctx.fillStyle = C_BG_DARK;
+             ctx.fillRect(0, 0, canvas.width, canvas.height);
+        } else if (bgType === 'sky') {
+             let grd = ctx.createLinearGradient(0, 0, 0, canvas.height);
+             grd.addColorStop(0, C_BG_SKY);
+             grd.addColorStop(1, "#87ceeb");
+             ctx.fillStyle = grd;
+             ctx.fillRect(0, 0, canvas.width, canvas.height);
+             bgClouds.forEach(c => { drawPixelSprite(cloudSprite, c.x, c.y, 2, false); });
+        } else if (bgType === 'space') {
+             ctx.fillStyle = C_BG_DARK;
+             ctx.fillRect(0, 0, canvas.width, canvas.height);
+             ctx.fillStyle = '#ffffff';
+             stars.forEach(s => { ctx.fillRect(s.x, s.y, s.size, s.size); });
+        }
+    }
+
+    function drawCar(x, y, w, h) {
+        let drawY = y - h;
+        ctx.fillStyle = C_BG_DARK; ctx.fillRect(x, drawY, w, h);
+        ctx.strokeStyle = C_KEY; ctx.strokeRect(x, drawY, w, h);
+        ctx.strokeRect(x + 15, drawY + 10, w - 30, 15);
+        ctx.fillRect(x + 10, y, 20, 10); ctx.fillRect(x + w - 30, y, 20, 10);
+        ctx.fillStyle = C_ACCENT; ctx.fillRect(x + w - 10, drawY + 20, 10, 10);
+    }
+
+    function drawBuilding(p) {
+        ctx.fillStyle = C_BG_DARK; ctx.fillRect(p.x, p.y, p.w, p.h);
+        ctx.strokeStyle = C_KEY; ctx.strokeRect(p.x, p.y, p.w, p.h);
+        
+        let windowW = 15, windowH = 25;
+        if (p.windows) {
+            p.windows.forEach(win => {
+                let worldY = p.y + win.dy;
+                if (worldY > cameraY && worldY < cameraY + canvas.height) {
+                    ctx.fillStyle = win.isOn ? C_ACCENT : C_DARK_KEY; 
+                    ctx.fillRect(p.x + win.dx, worldY, windowW, windowH);
+                }
+            });
+        }
+
+        if (p.type === 'skyscraper') {
+            ctx.beginPath(); ctx.moveTo(p.x + p.w/2, p.y); ctx.lineTo(p.x + p.w/2, p.y - 80); ctx.stroke();
+            ctx.fillStyle = 'red'; ctx.fillRect(p.x + p.w/2 - 3, p.y - 80, 6, 6); 
+        }
+    }
+
+    function draw() {
+        drawBackground();
+
+        ctx.save();
+        ctx.translate(0, -cameraY); 
+
+        let altitude = startGroundY - cameraY;
+        if (altitude > 1000) {
+            ctx.fillStyle = '#ffffff';
+            stars.forEach(s => {
+                ctx.globalAlpha = Math.min(1, (altitude - 1000) / 3000);
+                ctx.fillRect(s.x, s.y, s.size, s.size);
+            });
+            ctx.globalAlpha = 1.0;
+        }
+
+        platforms.forEach(p => {
+            if (p.type === 'building' || p.type === 'skyscraper') {
+                drawBuilding(p);
+            } else if (p.type === 'ground' || p.type === 'manhole') {
+                ctx.fillStyle = C_BG_DARK; ctx.fillRect(p.x, p.y, p.w, p.h);
+                ctx.strokeStyle = C_KEY; ctx.strokeRect(p.x, p.y, p.w, p.h);
+                ctx.fillStyle = C_DARK_KEY;
+                for(let i=0; i<p.w; i+=30) ctx.fillRect(p.x + i, p.y, 15, p.h); 
+            } else if (["floating", "airplane", "satellite"].includes(p.type)) {
+                let sprite = p.sprite;
+                let spriteW = sprite[0].length * pixelSize;
+                for(let ix = 0; ix < p.w; ix += spriteW) {
+                     drawPixelSprite(sprite, p.x + ix, p.y + 30, pixelSize, false);
+                }
+            } else {
+                ctx.fillStyle = C_BG_DARK; ctx.fillRect(p.x, p.y, p.w, p.h);
+                ctx.strokeStyle = C_KEY; ctx.strokeRect(p.x, p.y, p.w, p.h);
+            }
+        });
+
+        obstacles.forEach(o => {
+            if (o.type === 'car') drawCar(o.x, o.y, o.w, o.h);
+        });
+
+        if (!isGameOver && !isGameClear) {
+            let pSprite = jumpSprite;
+            if (player.isGrounded) {
+                let frameIdx = Math.floor((frames % 32) / 4); 
+                pSprite = runAnim[frameIdx];
+            }
+            drawPixelSprite(pSprite, player.x, player.y, pixelSize, true);
+        }
+
+        ctx.font = "14px 'Press Start 2P'";
+        ctx.fillStyle = C_KEY;
+        ctx.textAlign = "center";
+        particles.forEach(p => {
+            ctx.fillText(p.text, p.x, p.y);
+        });
+        ctx.textAlign = "left";
+
+        ctx.restore();
+    }
+
+    function gameLoop() {
+        update();
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    document.fonts.ready.then(() => {
+        initGame();
+        gameLoop();
+    });
+</script>
+</body>
+</html>

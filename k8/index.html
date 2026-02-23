@@ -1,1 +1,103 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>10초 클릭 마이크로 게임</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #222; color: white; font-family: sans-serif; text-align: center; touch-action: manipulation; }
+        #gameArea { position: relative; width: 100vw; height: 100vh; }
+        #ui { position: absolute; top: 10%; left: 50%; transform: translateX(-50%); z-index: 10; width: 100%; pointer-events: none; }
+        #scoreBoard, #timerBoard { font-size: 24px; font-weight: bold; margin: 5px; }
+        #target { 
+            position: absolute; width: 60px; height: 60px; background-color: #ff4757; 
+            border-radius: 10px; cursor: pointer; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        #startBtn {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            padding: 15px 30px; font-size: 20px; background-color: #1dd1a1; color: white;
+            border: none; border-radius: 5px; cursor: pointer; pointer-events: auto;
+        }
+    </style>
+</head>
+<body>
 
+<div id="gameArea">
+    <div id="ui">
+        <div id="timerBoard">남은 시간: <span id="time">10</span>초</div>
+        <div id="scoreBoard">점수: <span id="score">0</span></div>
+    </div>
+    <button id="startBtn">게임 시작</button>
+    <div id="target"></div>
+</div>
+
+<script>
+    const target = document.getElementById('target');
+    const startBtn = document.getElementById('startBtn');
+    const scoreDisplay = document.getElementById('score');
+    const timeDisplay = document.getElementById('time');
+    const gameArea = document.getElementById('gameArea');
+
+    let score = 0;
+    let timeLeft = 10;
+    let gameInterval;
+
+    // 타겟(빨간 네모)의 위치를 무작위로 바꾸는 함수
+    function moveTarget() {
+        // 화면 밖으로 나가지 않게 타겟 크기(60)를 빼줍니다.
+        const maxX = window.innerWidth - 60; 
+        const maxY = window.innerHeight - 60;
+
+        const randomX = Math.floor(Math.random() * maxX);
+        const randomY = Math.floor(Math.random() * maxY);
+
+        target.style.left = randomX + 'px';
+        target.style.top = randomY + 'px';
+    }
+
+    // 타겟을 클릭(또는 터치)했을 때
+    target.addEventListener('mousedown', hitTarget);
+    target.addEventListener('touchstart', (e) => {
+        e.preventDefault(); // 모바일 더블 탭 확대 방지
+        hitTarget();
+    });
+
+    function hitTarget() {
+        score++;
+        scoreDisplay.textContent = score;
+        moveTarget();
+    }
+
+    // 게임 시작 함수
+    startBtn.addEventListener('click', () => {
+        score = 0;
+        timeLeft = 10;
+        scoreDisplay.textContent = score;
+        timeDisplay.textContent = timeLeft;
+        
+        startBtn.style.display = 'none';
+        target.style.display = 'block';
+        moveTarget();
+
+        // 1초마다 시간 감소
+        gameInterval = setInterval(() => {
+            timeLeft--;
+            timeDisplay.textContent = timeLeft;
+
+            if (timeLeft <= 0) {
+                endGame();
+            }
+        }, 1000);
+    });
+
+    // 게임 종료 함수
+    function endGame() {
+        clearInterval(gameInterval);
+        target.style.display = 'none';
+        startBtn.style.display = 'block';
+        startBtn.textContent = '다시 하기 (최고 점수: ' + score + ')';
+    }
+</script>
+
+</body>
+</html>

@@ -1,1 +1,500 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nano Vaccine: Operation Override</title>
+    <style>
+        body {
+            margin: 0; padding: 0; background-color: #000; color: #fff;
+            font-family: 'Segoe UI', sans-serif; overflow: hidden;
+            display: flex; justify-content: center; align-items: center;
+            height: 100vh; touch-action: none; user-select: none;
+        }
+        #game-container {
+            width: 100%; max-width: 480px; height: 100%; max-height: 900px;
+            display: flex; flex-direction: column; position: relative;
+            background-color: #2a0808;
+        }
+        #game-area {
+            flex: 6.5; position: relative; overflow: hidden;
+            background: radial-gradient(circle at center, #4a0000 0%, #1a0000 100%);
+            border-bottom: 3px solid #ff4444; cursor: crosshair; /* 조준점 커서 */
+        }
+        canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 
+        #overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(20, 0, 0, 0.85); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 10;
+        }
+        #overlay h1 { color: #00ffff; text-shadow: 0 0 15px #00ffff; margin-bottom: 10px; font-size: 2.2rem; text-align: center;}
+        .star-box { font-size: 3rem; color: #444; margin: 10px 0; letter-spacing: 5px; }
+        .star-earned { color: #00ffff; text-shadow: 0 0 15px #00ffff; }
+        #start-btn {
+            padding: 15px 40px; font-size: 1.2rem; font-weight: bold; background: #00ffff;
+            color: #000; border: none; border-radius: 30px; cursor: pointer; margin-top: 20px;
+        }
+        #start-btn:active { transform: scale(0.95); }
+
+        #ui-area {
+            flex: 3.5; background-color: #111; padding: 15px;
+            display: flex; flex-direction: column; box-sizing: border-box; border-top: 2px solid #3a0000;
+        }
+        #stats-bar { display: flex; justify-content: space-between; font-size: 1.2rem; font-weight: bold; color: #ff8888; margin-bottom: 10px; }
+        #hp-bar-bg { width: 100%; height: 14px; background: #222; border-radius: 7px; margin-bottom: 15px; border: 1px solid #555; overflow: hidden; }
+        #hp-bar { width: 100%; height: 100%; background: #00ffff; transition: width 0.2s; }
+        
+        .cards { display: flex; gap: 10px; height: 100%; }
+        .card { flex: 1; border-radius: 12px; border: 2px solid #555; display: flex; flex-direction: column; justify-content: center; align-items: center; cursor: pointer; transition: 0.1s; position: relative; overflow: hidden; }
+        .card:active { transform: translateY(4px); }
+        .card-red { background: linear-gradient(135deg, #4a0000, #2a0000); border-color: #ff4444; }
+        .card-yellow { background: linear-gradient(135deg, #4a4a00, #2a2a00); border-color: #ffff44; }
+        .card-blue { background: linear-gradient(135deg, #002a4a, #001a2a); border-color: #00ffff; }
+        .card-icon { font-size: 1.8rem; margin-bottom: 5px; }
+        .card-title { font-size: 0.7rem; color: #ddd; font-weight: bold; letter-spacing: 1px;}
+        .card-val { font-size: 1.1rem; color: #fff; font-weight: bold; margin-top: 2px; }
+        .card-cost { background: rgba(0,0,0,0.8); width: 100%; padding: 4px 0; text-align: center; color: #ffaaaa; font-size: 0.9rem; position: absolute; bottom: 0; font-weight: bold;}
+        .disabled { filter: grayscale(1) brightness(0.5); pointer-events: none; }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="game-area">
+            <canvas id="gameCanvas"></canvas>
+            <div id="overlay">
+                <h1 id="title-text">NANO VACCINE</h1>
+                <div id="star-display" class="star-box">☆☆☆</div>
+                <h3 id="desc-text" style="color:#ffaaaa; text-align:center; margin: 0 20px;">ERADICATE THE VIRUS</h3>
+                <button id="start-btn">INJECT</button>
+            </div>
+        </div>
+
+        <div id="ui-area">
+            <div id="stats-bar">
+                <span id="wave-display">WAVE: 1</span>
+                <span id="gold-display">🧬 0</span>
+            </div>
+            <div id="hp-bar-bg"><div id="hp-bar"></div></div>
+            <div class="cards">
+                <div class="card card-red" id="btn-dmg" onclick="buyUpgrade('dmg')">
+                    <div class="card-icon">⚔️</div>
+                    <div class="card-title">ANTIBODY</div>
+                    <div class="card-val" id="val-dmg">LV.1</div>
+                    <div class="card-cost" id="cost-dmg">🧬 10</div>
+                </div>
+                <div class="card card-yellow" id="btn-spd" onclick="buyUpgrade('spd')">
+                    <div class="card-icon">⚡</div>
+                    <div class="card-title">SYNTHESIS</div>
+                    <div class="card-val" id="val-spd">LV.1</div>
+                    <div class="card-cost" id="cost-spd">🧬 15</div>
+                </div>
+                <div class="card card-blue" id="btn-pat" onclick="buyUpgrade('pat')">
+                    <div class="card-icon">🧬</div>
+                    <div class="card-title">EVOLUTION</div>
+                    <div class="card-val" id="val-pat">LINEAR</div>
+                    <div class="card-cost" id="cost-pat">🧬 30</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const overlay = document.getElementById('overlay');
+        const startBtn = document.getElementById('start-btn');
+        const titleText = document.getElementById('title-text');
+        const descText = document.getElementById('desc-text');
+        const starDisplay = document.getElementById('star-display');
+        
+        let width, height;
+        let isPlaying = false;
+        let frame = 0, screenShake = 0, spinAngle = 0;
+
+        // 조준점 (Aim) 상태
+        let aimX = 0, aimY = 0;
+
+        // 아이템 버프 상태
+        let buff = { type: null, timer: 0, maxTimer: 240, color: '' }; // 60fps * 4s = 240 frames
+
+        let audioCtx;
+        function initAudio() { if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        function playSound(type) {
+            if(!audioCtx || audioCtx.state !== 'running') return;
+            const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination); const now = audioCtx.currentTime;
+            if(type === 'shoot') {
+                osc.type = 'sine'; osc.frequency.setValueAtTime(1200, now); osc.frequency.exponentialRampToValueAtTime(400, now + 0.1);
+                gain.gain.setValueAtTime(0.05, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now); osc.stop(now + 0.1);
+            } else if(type === 'hit') { 
+                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(300, now); osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
+                gain.gain.setValueAtTime(0.05, now); gain.gain.linearRampToValueAtTime(0, now + 0.1); osc.start(now); osc.stop(now + 0.1);
+            } else if(type === 'powerup') { // 아이템 획득음
+                osc.type = 'square'; osc.frequency.setValueAtTime(400, now); osc.frequency.linearRampToValueAtTime(800, now + 0.3);
+                gain.gain.setValueAtTime(0.1, now); gain.gain.linearRampToValueAtTime(0, now + 0.3); osc.start(now); osc.stop(now + 0.3);
+            }
+        }
+
+        let gameData = { gold: 0, wave: 1 };
+        let core = { x: 0, y: 0, radius: 22, hp: 200, maxHp: 200, damage: 15, fireRate: 600, lastShot: 0 };
+        let upg = {
+            dmg: { cost: 10, lv: 1, increment: 5, costMult: 1.4 },
+            spd: { cost: 15, lv: 1, increment: 60, costMult: 1.5 },
+            pat: { cost: 30, lv: 1, maxLv: 4, costMult: 2.5, names: ["LINEAR", "FAN", "RADIAL", "ROTATION"] }
+        };
+
+        let enemies = [], bullets = [], particles = [], bloodCells = [], capsules = [];
+
+        function resize() {
+            width = document.getElementById('game-area').clientWidth; height = document.getElementById('game-area').clientHeight;
+            canvas.width = width; canvas.height = height; core.x = width / 2; core.y = height / 2;
+            aimX = core.x; aimY = 0; // 초기 조준은 위쪽
+            initBloodCells();
+        }
+        window.addEventListener('resize', resize);
+
+        // 터치 & 마우스 방향 감지 이벤트 (Canvas 내부만)
+        function updateAim(e) {
+            e.preventDefault();
+            let rect = canvas.getBoundingClientRect();
+            let clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            let clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            aimX = clientX - rect.left;
+            aimY = clientY - rect.top;
+        }
+        canvas.addEventListener('mousemove', updateAim);
+        canvas.addEventListener('mousedown', updateAim);
+        canvas.addEventListener('touchmove', updateAim, {passive: false});
+        canvas.addEventListener('touchstart', updateAim, {passive: false});
+
+        function initBloodCells() {
+            bloodCells = [];
+            for(let i=0; i<40; i++) bloodCells.push({
+                x: Math.random()*width, y: Math.random()*height, size: Math.random()*4+2,
+                vx: (Math.random()-0.5)*0.5, vy: (Math.random()-0.5)*0.5
+            });
+        }
+        resize();
+
+        function createParticles(x, y, color, amount) {
+            for(let i=0; i<amount; i++) {
+                particles.push({
+                    x, y, vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.5) * 8,
+                    life: 1.0, decay: Math.random() * 0.05 + 0.02, color: color, size: Math.random() * 5 + 2
+                });
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('gold-display').innerText = `🧬 ${Math.floor(gameData.gold)}`;
+            document.getElementById('wave-display').innerText = `WAVE: ${gameData.wave}/30`;
+            
+            let hpPercent = Math.max(0, (core.hp / core.maxHp) * 100);
+            document.getElementById('hp-bar').style.width = `${hpPercent}%`;
+            document.getElementById('hp-bar').style.backgroundColor = hpPercent > 50 ? '#00ffff' : (hpPercent > 25 ? '#ffff00' : '#ff0000');
+
+            document.getElementById('val-dmg').innerText = `LV.${upg.dmg.lv}`;
+            document.getElementById('cost-dmg').innerText = `🧬 ${Math.floor(upg.dmg.cost)}`;
+            document.getElementById('btn-dmg').className = gameData.gold >= upg.dmg.cost ? 'card card-red' : 'card card-red disabled';
+
+            document.getElementById('val-spd').innerText = `LV.${upg.spd.lv}`;
+            document.getElementById('cost-spd').innerText = core.fireRate <= 100 ? 'MAX' : `🧬 ${Math.floor(upg.spd.cost)}`;
+            document.getElementById('btn-spd').className = (gameData.gold >= upg.spd.cost && core.fireRate > 100) ? 'card card-yellow' : 'card card-yellow disabled';
+
+            document.getElementById('val-pat').innerText = upg.pat.names[upg.pat.lv-1];
+            document.getElementById('cost-pat').innerText = upg.pat.lv >= upg.pat.maxLv ? 'MAX' : `🧬 ${Math.floor(upg.pat.cost)}`;
+            document.getElementById('btn-pat').className = (gameData.gold >= upg.pat.cost && upg.pat.lv < upg.pat.maxLv) ? 'card card-blue' : 'card card-blue disabled';
+        }
+
+        window.buyUpgrade = function(type) {
+            if (!isPlaying || gameData.gold < upg[type].cost || (type==='pat' && upg.pat.lv >= upg.pat.maxLv)) return;
+            initAudio(); gameData.gold -= upg[type].cost; upg[type].lv++;
+            
+            if (type === 'dmg') { core.damage += upg.dmg.increment; upg.dmg.cost *= upg.dmg.costMult; } 
+            else if (type === 'spd') { core.fireRate = Math.max(100, core.fireRate - upg.spd.increment); upg.spd.cost *= upg.spd.costMult; } 
+            else if (type === 'pat') { 
+                upg.pat.cost *= upg.pat.costMult; core.hp = core.maxHp; 
+                createParticles(core.x, core.y, '#00ffff', 30);
+            }
+            updateUI();
+        };
+
+        function spawnEnemy() {
+            if(gameData.wave === 30 && enemies.length === 0) {
+                enemies.push({ x: width/2, y: -50, radius: 50, hp: 6000, maxHp: 6000, speed: 0.3, gold: 500, color: '#ff0000', type: 'boss', phase: 0 }); return;
+            } else if(gameData.wave === 30) return;
+
+            let side = Math.floor(Math.random() * 4), x, y;
+            if (side === 0) { x = Math.random() * width; y = -40; } else if (side === 1) { x = width + 40; y = Math.random() * height; }
+            else if (side === 2) { x = Math.random() * width; y = height + 40; } else { x = -40; y = Math.random() * height; }
+
+            let hpMult = 1 + (gameData.wave * 0.2); let speedMult = 1 + (gameData.wave * 0.05);
+            let rand = Math.random(), type = 'normal', eRadius = 15, eHp = 25 * hpMult, eSpeed = 0.7 * speedMult, eColor = '#ff4444';
+
+            if (gameData.wave > 3 && rand < 0.2) { type = 'fast'; eRadius = 10; eHp = 15 * hpMult; eSpeed = 1.6 * speedMult; eColor = '#ffff00'; } 
+            else if (gameData.wave > 6 && rand > 0.8) { type = 'tank'; eRadius = 24; eHp = 180 * hpMult; eSpeed = 0.3 * speedMult; eColor = '#aa00ff'; }
+            else if (gameData.wave > 10 && rand > 0.6 && rand <= 0.8) { type = 'mutant'; eRadius = 14; eHp = 35 * hpMult; eSpeed = 0.8 * speedMult; eColor = '#ff8800'; }
+            else if (gameData.wave > 15 && rand > 0.4 && rand <= 0.6) { type = 'orbit'; eRadius = 12; eHp = 30 * hpMult; eSpeed = 1.0 * speedMult; eColor = '#00ffaa'; }
+
+            enemies.push({ x, y, radius: eRadius, hp: eHp, maxHp: eHp, speed: eSpeed, gold: type==='tank'?4:2, color: eColor, type: type, angle: 0, wiggleOffset: Math.random()*Math.PI*2 });
+        }
+
+        // 아이템 캡슐 생성
+        function spawnCapsule() {
+            let x = Math.random() * (width - 40) + 20;
+            let types = [
+                { id: 'adrenaline', color: '#ff0055', icon: '🔥' },
+                { id: 'stimulant', color: '#ffff00', icon: '⚡' },
+                { id: 'shield', color: '#00aaff', icon: '🛡️' }
+            ];
+            let selected = types[Math.floor(Math.random() * types.length)];
+            capsules.push({ x: x, y: -30, radius: 15, hp: 30, maxHp: 30, type: selected.id, color: selected.color, icon: selected.icon, speed: 0.5 });
+        }
+
+        function fireBullet(x, y, angle, damage, isBig) {
+            bullets.push({ x, y, vx: Math.cos(angle)*12, vy: Math.sin(angle)*12, radius: isBig ? 8 : 4, damage: damage });
+        }
+
+        function update() {
+            frame++; const now = Date.now(); spinAngle += 0.05;
+            if (screenShake > 0) screenShake *= 0.85; if (screenShake < 0.5) screenShake = 0;
+            if (frame % 600 === 0 && gameData.wave < 30) { gameData.wave++; updateUI(); } 
+
+            let spawnRate = Math.max(20, 100 - gameData.wave * 2.5); 
+            if (frame % Math.floor(spawnRate) === 0) spawnEnemy();
+            
+            // 캡슐 스폰 (약 8초 마다)
+            if (frame % 480 === 0) spawnCapsule();
+
+            // 버프 타이머
+            if (buff.timer > 0) {
+                buff.timer--;
+                if (buff.timer <= 0) buff.type = null;
+            }
+
+            bloodCells.forEach(b => {
+                b.x += b.vx + Math.cos(frame*0.01)*0.2; b.y += b.vy + Math.sin(frame*0.01)*0.2;
+                if(b.x < -20) b.x = width+20; if(b.x > width+20) b.x = -20;
+                if(b.y < -20) b.y = height+20; if(b.y > height+20) b.y = -20;
+            });
+
+            // 버프 적용된 스탯 계산
+            let currentFireRate = buff.type === 'stimulant' ? Math.min(50, core.fireRate / 4) : core.fireRate;
+            let currentDamage = buff.type === 'adrenaline' ? core.damage * 3 : core.damage;
+            let isBigBullet = buff.type === 'adrenaline';
+
+            // 플레이어 타겟팅 각도 계산
+            let targetAngle = Math.atan2(aimY - core.y, aimX - core.x);
+
+            // 무기 발사 (자동으로 유저가 터치한/마우스를 둔 방향으로 발사)
+            if (now - core.lastShot > currentFireRate) {
+                let patLv = upg.pat.lv;
+                if (patLv === 1) { 
+                    fireBullet(core.x, core.y, targetAngle, currentDamage, isBigBullet);
+                } else if (patLv === 2) { 
+                    fireBullet(core.x, core.y, targetAngle, currentDamage, isBigBullet);
+                    fireBullet(core.x, core.y, targetAngle - 0.3, currentDamage, isBigBullet);
+                    fireBullet(core.x, core.y, targetAngle + 0.3, currentDamage, isBigBullet);
+                } else if (patLv === 3) { 
+                    for(let i=0; i<8; i++) fireBullet(core.x, core.y, (Math.PI*2/8)*i + targetAngle, currentDamage, isBigBullet);
+                } else if (patLv === 4) { 
+                    fireBullet(core.x, core.y, targetAngle - 0.2, currentDamage, isBigBullet);
+                    fireBullet(core.x, core.y, targetAngle + 0.2, currentDamage, isBigBullet);
+                    for(let i=0; i<4; i++) fireBullet(core.x, core.y, spinAngle + (Math.PI/2)*i, currentDamage * 1.5, isBigBullet);
+                }
+                playSound('shoot'); core.lastShot = now;
+            }
+
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                bullets[i].x += bullets[i].vx; bullets[i].y += bullets[i].vy;
+                if (bullets[i].x < -50 || bullets[i].x > width+50 || bullets[i].y < -50 || bullets[i].y > height+50) bullets.splice(i, 1);
+            }
+
+            // 캡슐 이동 및 피격
+            for (let i = capsules.length - 1; i >= 0; i--) {
+                let c = capsules[i];
+                c.y += c.speed; c.x += Math.sin(frame*0.05)*0.5; // 떠내려옴
+                
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    if (Math.hypot(c.x - bullets[j].x, c.y - bullets[j].y) < c.radius + bullets[j].radius) {
+                        c.hp -= bullets[j].damage; 
+                        if (buff.type !== 'adrenaline') bullets.splice(j, 1); // 아드레날린은 관통
+                        
+                        if (c.hp <= 0) {
+                            // 캡슐 파괴 = 버프 획득
+                            buff.type = c.type; buff.color = c.color; buff.timer = buff.maxTimer;
+                            playSound('powerup'); createParticles(c.x, c.y, c.color, 20);
+                            capsules.splice(i, 1); break;
+                        } else {
+                            createParticles(c.x, c.y, '#ffffff', 1);
+                        }
+                    }
+                }
+            }
+
+            // 적 이동 및 충돌
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let e = enemies[i];
+                let distToCore = Math.hypot(core.x - e.x, core.y - e.y);
+                let directAngle = Math.atan2(core.y - e.y, core.x - e.x);
+                
+                if (e.type === 'mutant') {
+                    e.angle = (e.angle || directAngle); e.angle += (Math.random()-0.5) * 0.2;
+                    e.angle += (directAngle - e.angle) * 0.05;
+                    e.x += Math.cos(e.angle) * e.speed; e.y += Math.sin(e.angle) * e.speed;
+                } else if (e.type === 'orbit') {
+                    if (distToCore > 120) { e.x += Math.cos(directAngle) * e.speed; e.y += Math.sin(directAngle) * e.speed; } 
+                    else { e.angle = directAngle + Math.PI/2; e.x += Math.cos(e.angle) * (e.speed*1.5) + Math.cos(directAngle) * 0.2; e.y += Math.sin(e.angle) * (e.speed*1.5); }
+                } else {
+                    let wiggle = Math.sin(frame * (e.type==='fast'?0.2:0.05) + e.wiggleOffset) * (e.type==='fast'?2:1);
+                    e.x += Math.cos(directAngle + wiggle*0.5) * e.speed; e.y += Math.sin(directAngle + wiggle*0.5) * e.speed;
+                }
+                
+                // 본진 충돌 처리
+                if (distToCore < core.radius + e.radius) {
+                    if (buff.type === 'shield') {
+                        // 쉴드 켜진 상태면 보스가 아닐경우 즉사반사
+                        if(e.type !== 'boss') e.hp = 0;
+                        else { core.hp -= 2; screenShake = 10; } // 보스는 쉴드 관통(데미지 감소)
+                    } else {
+                        core.hp -= e.type==='boss'? 5 : 0.5; screenShake = e.type==='boss'? 15 : 6; 
+                        if(frame % 5 === 0) playSound('hit');
+                    }
+                    createParticles(core.x, core.y, '#ff0000', 5); updateUI();
+                    if (core.hp <= 0) { endGame(false); return; }
+                }
+
+                // 총알 피격
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    if (Math.hypot(e.x - bullets[j].x, e.y - bullets[j].y) < e.radius + bullets[j].radius) {
+                        e.hp -= bullets[j].damage; 
+                        if (buff.type !== 'adrenaline') bullets.splice(j, 1); // 아드레날린은 관통 특성 부여
+                        createParticles(e.x, e.y, e.color, 3); playSound('hit');
+                        if (e.hp <= 0) break;
+                    }
+                }
+
+                if (e.hp <= 0) {
+                    gameData.gold += e.gold; updateUI(); createParticles(e.x, e.y, e.color, 20);
+                    if(e.type === 'boss') endGame(true); 
+                    enemies.splice(i, 1);
+                }
+            }
+
+            for(let i = particles.length - 1; i >= 0; i--) {
+                particles[i].x += particles[i].vx; particles[i].y += particles[i].vy; particles[i].life -= particles[i].decay;
+                if(particles[i].life <= 0) particles.splice(i, 1);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+            ctx.save();
+            if(screenShake > 0) ctx.translate((Math.random()-0.5)*screenShake, (Math.random()-0.5)*screenShake);
+
+            bloodCells.forEach(b => {
+                ctx.fillStyle = 'rgba(255, 100, 100, 0.2)';
+                ctx.beginPath(); ctx.arc(b.x, b.y, b.size, 0, Math.PI*2); ctx.fill();
+            });
+
+            // 캡슐 그리기
+            capsules.forEach(c => {
+                ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(Math.sin(frame*0.05)*0.5);
+                ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, c.radius, 0, Math.PI*2); ctx.fill();
+                ctx.strokeStyle = c.color; ctx.lineWidth = 4; ctx.stroke();
+                ctx.fillStyle = '#000'; ctx.font = '16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText(c.icon, 0, 0);
+                
+                let hpR = c.hp / c.maxHp; ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(-c.radius, -c.radius-8, c.radius*2, 4);
+                ctx.fillStyle = c.color; ctx.fillRect(-c.radius, -c.radius-8, c.radius*2*hpR, 4);
+                ctx.restore();
+            });
+
+            // 본진 그리기
+            ctx.save(); ctx.translate(core.x, core.y);
+            
+            // 쉴드 및 버프 오라 효과 (지속시간에 따라 크기 감소)
+            if (buff.type) {
+                let auraSize = core.radius + 10 + (buff.timer / buff.maxTimer) * 25;
+                ctx.beginPath(); ctx.arc(0, 0, auraSize, 0, Math.PI*2);
+                ctx.strokeStyle = buff.color; ctx.lineWidth = 4;
+                ctx.setLineDash([10, 5]); ctx.lineDashOffset = -frame; ctx.stroke(); ctx.setLineDash([]);
+                ctx.fillStyle = buff.color + '33'; // 투명도 추가
+                ctx.fill();
+            } else if(upg.pat.lv >= 3) {
+                ctx.beginPath(); ctx.arc(0, 0, core.radius + 15 + Math.sin(frame*0.1)*5, 0, Math.PI*2);
+                ctx.fillStyle = 'rgba(0, 255, 255, 0.1)'; ctx.fill();
+            }
+
+            ctx.rotate(frame * 0.01);
+            ctx.beginPath(); for(let i=0; i<6; i++) ctx.lineTo(Math.cos(i*Math.PI/3)*core.radius, Math.sin(i*Math.PI/3)*core.radius); ctx.closePath();
+            ctx.fillStyle = '#002244'; ctx.fill(); ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 3; ctx.stroke();
+            
+            ctx.beginPath(); ctx.arc(0, 0, core.radius*0.5, 0, Math.PI*2);
+            ctx.fillStyle = '#ffffff'; ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 15; ctx.fill(); ctx.shadowBlur = 0;
+            ctx.restore();
+
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
+            enemies.forEach(e => {
+                ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(frame * 0.05 + e.wiggleOffset);
+                ctx.fillStyle = e.color; ctx.beginPath();
+                if (e.type === 'boss') { for(let i=0; i<Math.PI*2; i+=0.2) { let r = e.radius + Math.sin(i*8 + frame*0.2)*10; ctx.lineTo(Math.cos(i)*r, Math.sin(i)*r); } } 
+                else if (e.type === 'mutant' || e.type === 'orbit') { for(let i=0; i<Math.PI*2; i+=0.5) { let r = e.radius + Math.sin(i*3 + frame*0.1)*5; ctx.lineTo(Math.cos(i)*r, Math.sin(i)*r); } } 
+                else { let spikes = e.type === 'fast' ? 6 : 10; for(let i=0; i<Math.PI*2; i+=Math.PI*2/spikes) { ctx.lineTo(Math.cos(i)*e.radius, Math.sin(i)*e.radius); ctx.lineTo(Math.cos(i+0.2)*e.radius*0.5, Math.sin(i+0.2)*e.radius*0.5); } }
+                ctx.fill(); ctx.restore();
+                
+                let hpR = e.hp / e.maxHp; ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(e.x-e.radius, e.y-e.radius-8, e.radius*2, 4);
+                ctx.fillStyle = e.type==='boss'?'#f00':'#0f0'; ctx.fillRect(e.x-e.radius, e.y-e.radius-8, e.radius*2*hpR, 4);
+            });
+
+            ctx.shadowBlur = 8; ctx.shadowColor = buff.type==='adrenaline'?'#ff0055':'#00ffff'; 
+            ctx.fillStyle = buff.type==='adrenaline'?'#ffaaaa':'#ffffff';
+            bullets.forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI*2); ctx.fill(); });
+            ctx.shadowBlur = 0;
+
+            // 조준점 (크로스헤어) 그리기
+            ctx.beginPath();
+            ctx.arc(aimX, aimY, 6, 0, Math.PI*2);
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        function endGame(isVictory) {
+            isPlaying = false; 
+            let stars = isVictory ? 3 : (gameData.wave >= 20 ? 2 : (gameData.wave >= 10 ? 1 : 0));
+            let starHTML = ''; for(let i=0; i<3; i++) { starHTML += i < stars ? '<span class="star-earned">★</span>' : '☆'; }
+            
+            overlay.style.display = 'flex';
+            titleText.innerText = isVictory ? "VIRUS ERADICATED!" : "CELL INFECTED";
+            titleText.style.color = isVictory ? "#00ffff" : "#ff4444";
+            descText.innerText = `SURVIVED TO WAVE ${gameData.wave}`;
+            starDisplay.innerHTML = starHTML;
+            startBtn.innerText = 'REINJECT VACCINE';
+        }
+
+        function startGame() {
+            initAudio(); isPlaying = true; frame = 0; screenShake = 0; spinAngle = 0;
+            gameData = { gold: 0, wave: 1 }; buff = { type: null, timer: 0, maxTimer: 240, color: '' };
+            core = { x: width/2, y: height/2, radius: 22, hp: 200, maxHp: 200, damage: 15, fireRate: 600, lastShot: 0 };
+            upg = { dmg: { cost: 10, lv: 1, increment: 5, costMult: 1.4 }, spd: { cost: 15, lv: 1, increment: 60, costMult: 1.5 }, pat: { cost: 30, lv: 1, maxLv: 4, costMult: 2.5, names: ["LINEAR", "FAN", "RADIAL", "ROTATION"] } };
+            enemies = []; bullets = []; particles = []; capsules = [];
+            aimX = core.x; aimY = 0;
+            overlay.style.display = 'none'; updateUI(); loop();
+        }
+
+        function loop() { if (!isPlaying) return; update(); draw(); requestAnimationFrame(loop); }
+        startBtn.addEventListener('click', startGame);
+    </script>
+</body>
+</html>
