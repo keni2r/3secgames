@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>8-bit Slayer - Ultimate Arcade</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body { 
+            margin: 0; overflow: hidden; background: #0f380f; 
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            height: 100vh; font-family: 'Press Start 2P', cursive;
+            user-select: none; touch-action: none;
+        }
+        #gameContainer { position: relative; width: 100%; max-width: 400px; }
+        canvas { 
+            display: block; background: #9bbc0f; margin: auto;
+            border: 4px solid #306230; border-radius: 5px;
+            box-shadow: 0 0 15px rgba(155, 188, 15, 0.5);
+        }
+        #uiLayer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            color: #0f380f; text-align: center; pointer-events: none; 
+        }
+        h1 { font-size: 20px; line-height: 1.5; margin-bottom: 20px; text-shadow: 2px 2px #8bac0f; }
+        p { font-size: 10px; line-height: 1.5; margin-bottom: 20px; }
+        
+        .btn {
+            pointer-events: auto; background: #0f380f; color: #9bbc0f;
+            border: 4px solid #306230; padding: 15px 20px; margin: 10px;
+            font-size: 14px; font-family: 'Press Start 2P', cursive; cursor: pointer;
+        }
+        .btn:active { transform: scale(0.95); background: #306230; }
+        #gameOverUI { display: none; }
+        
+        #touchGuide {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; opacity: 0.15; pointer-events: none;
+        }
+        .half { flex: 1; border: 2px dashed #0f380f; display: flex; align-items: center; justify-content: center; font-size: 10px;}
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+    <div id="uiLayer">
+        <div id="touchGuide">
+            <div class="half" style="border-right: none;">LEFT<br>ATTACK</div>
+            <div class="half">RIGHT<br>ATTACK</div>
+        </div>
+        <div id="startUI">
+            <h1>BUG SLAYER<br>MAXIMUM</h1>
+            <p>- TAP TO START & ENABLE SOUND -</p>
+        </div>
+        <div id="gameOverUI">
+            <h1>YOU DIED!</h1>
+            <p id="finalScoreText">SCORE: 0</p>
+            <button class="btn" onclick="restartGame()">RESTART</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const startUI = document.getElementById('startUI');
+    const gameOverUI = document.getElementById('gameOverUI');
+    const finalScoreText = document.getElementById('finalScoreText');
+    const touchGuide = document.getElementById('touchGuide');
+
+    canvas.width = 400;
+    canvas.height = 600;
+
+    const C_DARK = '#0f380f';
+    const C_MID_DARK = '#306230';
+    const C_MID_LIGHT = '#8bac0f';
+    const C_LIGHT = '#9bbc0f';
+    const C_FLOOR_BG = '#0a250a'; 
+    
+    const pixelSize = 4; 
+    const groundY = canvas.height - 120; 
+
+    // --- 웹 오디오 API (8비트 사운드 생성기) ---
+    let audioCtx;
+    function initAudio() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+    
+    function playSound(type) {
+        if (!audioCtx) return;
+        let osc = audioCtx.createOscillator();
+        let gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        let now = audioCtx.currentTime;
+        if (type === 'swing') {
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(400, now);
+            osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            osc.start(now); osc.stop(now + 0.1);
+        } else if (type === 'hit') {
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(150, now);
+            osc.frequency.exponentialRampToValueAtTime(50, now + 0.15);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+            osc.start(now); osc.stop(now + 0.15);
+        } else if (type === 'levelUp') {
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(400, now);
+            osc.frequency.setValueAtTime(600, now + 0.1);
+            osc.frequency.setValueAtTime(800, now + 0.2);
+            gain.gain.setValueAtTime(0.15, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.4);
+            osc.start(now); osc.stop(now + 0.4);
+        } else if (type === 'die') {
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(200, now);
+            osc.frequency.exponentialRampToValueAtTime(50, now + 0.6);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.6);
+            osc.start(now); osc.stop(now + 0.6);
+        }
+    }
+
+    // --- 스마트폰 진동 (Haptic) ---
+    function triggerVibration(pattern) {
+        if (navigator.vibrate) navigator.vibrate(pattern);
+    }
+
+    // --- 업데이트된 플레이어 캐릭터 ---
+    const playerIdle = [
+        [0,0,0,0,0,2,2,2,0,0,0,0],
+        [0,0,0,0,2,3,3,3,2,0,0,0],
+        [0,0,0,2,3,2,3,2,3,2,0,0],
+        [0,0,0,2,3,3,3,3,3,2,0,0],
+        [0,0,0,0,2,2,2,2,2,0,0,0],
+        [0,0,0,2,1,1,1,1,1,2,0,0], 
+        [0,0,2,1,1,2,2,2,1,1,2,0],
+        [0,0,2,1,2,1,1,1,2,1,2,0],
+        [0,0,2,2,2,1,1,1,2,2,2,0],
+        [0,0,0,0,2,2,1,1,2,0,0,0],
+        [0,0,0,0,2,1,0,0,1,2,0,0],
+        [0,0,0,0,2,1,0,0,1,2,0,0],
+        [0,0,0,2,2,0,0,0,0,2,2,0]
+    ];
+
+    // 몸을 앞숙이고, 뒷머리가 휘날리며 뒷다리를 뻗는 역동적인 공격 모션
+    const playerAttack = [
+        [0,0,0,2,2,2,0,0,0,0,0,0], 
+        [0,0,2,2,2,2,3,3,2,0,0,0],
+        [0,0,0,2,3,2,3,2,3,2,0,0],
+        [0,0,0,2,3,3,3,3,3,2,0,0],
+        [0,0,0,0,2,2,2,2,2,0,0,0],
+        [0,0,0,0,0,1,1,1,1,1,2,2], // 찌르기 (어깨 전진)
+        [0,0,0,0,2,1,2,2,2,1,0,0],
+        [0,0,0,2,2,1,1,1,2,0,0,0],
+        [0,0,2,1,1,1,1,2,0,0,0,0], // 뒷다리 뻗음
+        [0,0,2,2,2,1,1,2,0,0,0,0],
+        [0,2,1,0,0,1,1,2,0,0,0,0],
+        [0,2,0,0,0,0,1,2,0,0,0,0],
+        [2,2,0,0,0,0,2,2,0,0,0,0]
+    ];
+
+    const bugFrames = [
+        [[0,0,2,0,2,0,0],[0,2,1,2,1,2,0],[2,1,1,1,1,1,2],[0,2,0,0,0,2,0]],
+        [[0,0,2,0,2,0,0],[0,2,1,2,1,2,0],[0,2,1,1,1,2,0],[0,0,2,0,2,0,0]]
+    ];
+
+    const eagleFrames = [
+        [[2,0,0,0,0,0,0,0,2],[2,2,0,0,2,2,0,2,2],[0,2,2,2,1,1,2,2,0],[0,0,2,1,1,1,1,2,0],[0,0,0,2,2,2,2,0,0],[0,0,0,0,2,2,0,0,0]],
+        [[0,0,0,0,0,0,0,0,0],[0,0,0,0,2,2,0,0,0],[0,0,2,2,1,1,2,2,0],[0,2,1,1,1,1,1,1,2],[0,2,2,2,2,2,2,2,2],[0,0,0,0,2,2,0,0,0]]
+    ];
+
+    const weapons = [
+        { name: "STICK", range: 75, sprite: [[2,2,2,2,2]], icon: [[2,2,2]] },
+        { name: "DAGGER", range: 90, sprite: [[2,1,1,3,3,3]], icon: [[2,1,3,3]] },
+        { name: "SWORD", range: 110, sprite: [[2,3,3,3,3,3,3,3],[0,2,1,1,1,1,1,2]], icon: [[2,3,3,3],[0,2,1,2]] },
+        { name: "MACE", range: 130, sprite: [[2,1,1,1,1,2,2],[0,2,2,2,2,2,2],[0,0,0,0,0,2,2]], icon: [[2,1,2],[0,2,2],[0,2,2]] },
+        { name: "KATANA", range: 155, sprite: [[2,1,1,3,3,3,3,3,3,3,3,3]], icon: [[2,1,3,3,3]] },
+        { name: "GLAIVE", range: 180, sprite: [[2,1,1,1,1,1,1,1,1,3,3,3,3,3]], icon: [[2,1,1,3,3]] },
+        { name: "GREATSWORD", range: 210, sprite: [[0,2,3,3,3,3,3,3,3,3,3,3,3,3],[2,3,1,1,1,1,1,1,1,1,1,1,1,2],[0,2,2,2,2,2,2,2,2,2,2,2,2,0]], icon: [[0,3,3,3],[2,1,1,2],[0,2,2,0]] },
+        { name: "HALBERD", range: 250, sprite: [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,3,3],[2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,3,3,3],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2]], icon: [[0,0,3],[2,1,3],[0,0,2]] },
+        { name: "EXCALIBUR", range: 300, sprite: [[0,0,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],[2,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,3],[0,0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]], icon: [[0,3,3,3,3],[2,1,1,1,3],[0,2,2,2,2]] }
+    ];
+
+    const upgradeScores = [0, 30, 80, 150, 230, 330, 450, 600, 800]; 
+
+    let state = 'START'; 
+    let score = 0;
+    let frames = 0;
+    
+    let player = {
+        x: canvas.width / 2,
+        y: groundY,
+        dir: 1, 
+        attackTimer: 0,
+        weaponTier: 0,
+        attackUp: false // 상단 공격 여부
+    };
+    
+    let enemies = []; 
+    let particles = [];
+
+    function drawSprite(sprite, x, y, flip = false, scale = pixelSize, alignBot = true) {
+        ctx.save();
+        ctx.translate(x, y);
+        if (flip) ctx.scale(-1, 1);
+        
+        let width = sprite[0].length * scale;
+        let height = sprite.length * scale;
+        let startX = -width / 2;
+        let startY = alignBot ? -height : 0; 
+
+        for (let r = 0; r < sprite.length; r++) {
+            for (let c = 0; c < sprite[r].length; c++) {
+                if (sprite[r][c] === 1) ctx.fillStyle = C_MID_DARK;
+                else if (sprite[r][c] === 2) ctx.fillStyle = C_DARK;
+                else if (sprite[r][c] === 3) ctx.fillStyle = C_MID_LIGHT;
+                else continue;
+                ctx.fillRect(startX + c * scale, startY + r * scale, scale, scale);
+            }
+        }
+        ctx.restore();
+    }
+
+    // 무기 그리기 (상단 공격 시 회전 적용)
+    function drawWeapon(sprite, x, y, flip = false, attackUp = false, scale = pixelSize) {
+        ctx.save();
+        ctx.translate(x, y);
+        if (flip) ctx.scale(-1, 1);
+        
+        // 공중 몹 타격 시 무기를 대각선 45도 위로 꺾음
+        if (attackUp) {
+            ctx.rotate(-Math.PI / 4);
+        }
+        
+        let height = sprite.length * scale;
+        let startX = 0; 
+        let startY = -height / 2; 
+
+        for (let r = 0; r < sprite.length; r++) {
+            for (let c = 0; c < sprite[r].length; c++) {
+                if (sprite[r][c] === 1) ctx.fillStyle = C_MID_DARK;
+                else if (sprite[r][c] === 2) ctx.fillStyle = C_DARK;
+                else if (sprite[r][c] === 3) ctx.fillStyle = C_MID_LIGHT;
+                else continue;
+                ctx.fillRect(startX + c * scale, startY + r * scale, scale, scale);
+            }
+        }
+        ctx.restore();
+    }
+
+    function drawIcon(sprite, x, y, scale = 3) {
+        let width = sprite[0].length * scale;
+        let height = sprite.length * scale;
+        let startX = x - width / 2;
+        let startY = y - height / 2;
+        for (let r = 0; r < sprite.length; r++) {
+            for (let c = 0; c < sprite[r].length; c++) {
+                if (sprite[r][c] === 1) ctx.fillStyle = C_MID_DARK;
+                else if (sprite[r][c] === 2) ctx.fillStyle = C_DARK;
+                else if (sprite[r][c] === 3) ctx.fillStyle = C_MID_LIGHT;
+                else continue;
+                ctx.fillRect(startX + c * scale, startY + r * scale, scale, scale);
+            }
+        }
+    }
+
+    function drawFloor() {
+        ctx.fillStyle = C_FLOOR_BG;
+        ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+        ctx.fillStyle = C_MID_DARK;
+        ctx.fillRect(0, groundY, canvas.width, 4);
+        ctx.fillStyle = C_DARK;
+        let tileSize = pixelSize * 3;
+        for (let py = groundY + 4; py < canvas.height; py += tileSize) {
+            for (let px = 0; px < canvas.width; px += tileSize) {
+                if ((Math.floor(px / tileSize) + Math.floor(py / tileSize)) % 2 === 0) {
+                    ctx.fillRect(px, py, tileSize, tileSize);
+                }
+            }
+        }
+    }
+
+    function spawnEnemy() {
+        let type = Math.random() > (0.8 - score * 0.0005) ? 'eagle' : 'bug'; 
+        let spawnDir = Math.random() > 0.5 ? 1 : -1; 
+        
+        if (type === 'bug') {
+            let startX = spawnDir === 1 ? -30 : canvas.width + 30;
+            enemies.push({
+                type: 'bug', x: startX, y: groundY, dir: spawnDir, 
+                vx: spawnDir * (1.5 + (score * 0.006)), vy: 0,
+                frameOffset: Math.random()*10
+            });
+        } else {
+            // [업데이트] 새(Eagle) 부채꼴 스폰 및 플레이어 방향 이동
+            let spawnX = Math.random() * (canvas.width + 100) - 50; 
+            let spawnY = -50 - (Math.random() * 80); // 화면 위쪽 다양한 높이
+            
+            // 플레이어 머리 위를 향하는 각도 계산
+            let angle = Math.atan2((groundY - 30) - spawnY, player.x - spawnX);
+            let speed = 2.0 + (score * 0.008);
+            
+            enemies.push({
+                type: 'eagle', x: spawnX, y: spawnY, dir: spawnX < player.x ? 1 : -1,
+                vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+                frameOffset: Math.random()*10
+            });
+        }
+    }
+
+    function update() {
+        if (state !== 'PLAYING') return;
+        frames++;
+
+        if (player.weaponTier < 8 && score >= upgradeScores[player.weaponTier + 1]) {
+            player.weaponTier++;
+            playSound('levelUp');
+            triggerVibration([50, 50, 50]);
+            particles.push({ type: 'text', text: `LEVEL UP!`, x: player.x, y: player.y - 80, life: 60, color: C_MID_LIGHT });
+        }
+        
+        if (player.attackTimer > 0) player.attackTimer--;
+
+        let spawnRate = Math.max(15, 55 - Math.floor(score / 12));
+        if (frames % spawnRate === 0) spawnEnemy();
+
+        let weapon = weapons[player.weaponTier];
+
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            let e = enemies[i];
+            e.x += e.vx; 
+            e.y += e.vy; 
+
+            // 유클리디안 거리(대각선 포함)로 피격/충돌 계산
+            let dist = Math.hypot(e.x - player.x, e.y - player.y);
+
+            if (dist < 20) { 
+                gameOver(); return; 
+            }
+
+            if (player.attackTimer > 0) {
+                let isEnemyInDir = (player.dir === 1 && e.x > player.x) || (player.dir === -1 && e.x < player.x);
+                if (isEnemyInDir && dist <= weapon.range) {
+                    
+                    playSound('hit');
+                    triggerVibration(40); // 처치 시 강한 진동
+                    
+                    for(let k=0; k<10; k++){
+                        particles.push({
+                            type: 'pixel', x: e.x, y: e.y - 15,
+                            vx: (Math.random() - 0.5) * 10, vy: (Math.random() - 1) * 8,
+                            life: 15 + Math.random() * 20,
+                            size: Math.random() > 0.5 ? pixelSize : pixelSize * 1.5,
+                            color: Math.random() > 0.5 ? C_DARK : C_MID_DARK
+                        });
+                    }
+                    score += 5;
+                    particles.push({ type: 'text', text: '+5', x: e.x, y: e.y - 25, life: 20, color: C_MID_LIGHT });
+                    
+                    enemies.splice(i, 1);
+                }
+            }
+        }
+
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let p = particles[i];
+            if (p.type === 'text') {
+                p.y -= 0.5;
+            } else if (p.type === 'pixel') {
+                p.x += p.vx; p.y += p.vy; p.vy += 0.5; // 중력 적용
+            }
+            p.life--;
+            if (p.life <= 0) particles.splice(i, 1);
+        }
+    }
+
+    function draw() {
+        ctx.fillStyle = C_LIGHT; 
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        drawFloor();
+
+        if (state === 'PLAYING' || state === 'GAMEOVER') {
+            
+            enemies.forEach(e => {
+                let frame = Math.floor((frames + e.frameOffset) / (e.type==='bug'?8:12)) % 2;
+                let sprite = e.type === 'bug' ? bugFrames[frame] : eagleFrames[frame];
+                drawSprite(sprite, e.x, e.y, e.dir === -1, pixelSize, true);
+            });
+
+            let pSprite = player.attackTimer > 0 ? playerAttack : playerIdle;
+            let flipPlayer = player.dir === -1;
+            drawSprite(pSprite, player.x, player.y, flipPlayer, pixelSize, true);
+
+            if (player.attackTimer > 0) {
+                let weapon = weapons[player.weaponTier];
+                let wx = player.x + (player.dir * 12); 
+                let wy = player.y - 25; 
+                drawWeapon(weapon.sprite, wx, wy, flipPlayer, player.attackUp, pixelSize);
+            }
+
+            particles.forEach(p => {
+                if (p.type === 'text') {
+                    ctx.font = "10px 'Press Start 2P'";
+                    ctx.fillStyle = p.color; 
+                    ctx.textAlign = "center";
+                    ctx.fillText(p.text, p.x, p.y);
+                } else if (p.type === 'pixel') {
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(p.x, p.y, p.size, p.size);
+                }
+            });
+
+            ctx.fillStyle = C_DARK; ctx.textAlign = "left"; ctx.font = "14px 'Press Start 2P'"; 
+            ctx.fillText(`SCORE:${score}`, 15, 35);
+            
+            ctx.fillStyle = C_MID_LIGHT; ctx.fillRect(canvas.width - 60, 15, 45, 45); 
+            ctx.strokeStyle = C_DARK; ctx.lineWidth = 4; ctx.strokeRect(canvas.width - 60, 15, 45, 45); 
+
+            let currentIcon = weapons[player.weaponTier].icon;
+            drawIcon(currentIcon, canvas.width - 37.5, 37.5, 3); 
+            
+            ctx.fillStyle = C_DARK; ctx.textAlign = "right"; ctx.font = "8px 'Press Start 2P'";
+            ctx.fillText(weapons[player.weaponTier].name, canvas.width - 15, 75);
+        }
+    }
+
+    function handleInput(e) {
+        e.preventDefault();
+        initAudio(); // 첫 터치 시 오디오 활성화
+
+        if (state === 'START') {
+            state = 'PLAYING'; startUI.style.display = 'none'; touchGuide.style.display = 'none'; return;
+        }
+        if (state !== 'PLAYING' || player.attackTimer > 0) return;
+
+        let rect = canvas.getBoundingClientRect();
+        let clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        let x = (clientX - rect.left) * (canvas.width / rect.width);
+
+        if (x < canvas.width / 2) player.dir = -1; 
+        else player.dir = 1;  
+        
+        player.attackTimer = 12; 
+        
+        // --- 공격 시 사거리 내에 상단 공중 몹(새)이 있는지 확인하여 모션 꺾기 ---
+        player.attackUp = false;
+        let weapon = weapons[player.weaponTier];
+        for(let i=0; i<enemies.length; i++) {
+            let e = enemies[i];
+            let isEnemyInDir = (player.dir === 1 && e.x > player.x) || (player.dir === -1 && e.x < player.x);
+            let dist = Math.hypot(e.x - player.x, e.y - player.y);
+            // 사거리 내에 있고, 새(eagle)이며, 플레이어보다 위쪽에 있으면 대각선 공격 모션 활성화
+            if (isEnemyInDir && dist <= weapon.range && e.type === 'eagle' && e.y < player.y - 40) {
+                player.attackUp = true;
+                break;
+            }
+        }
+
+        playSound('swing');
+        triggerVibration(15); // 스윙 시 가벼운 진동
+    }
+
+    function gameOver() {
+        state = 'GAMEOVER'; 
+        playSound('die');
+        triggerVibration([100, 50, 150]); // 게임 오버 시 묵직한 진동 패턴
+        finalScoreText.innerText = `SCORE: ${score}`; 
+        gameOverUI.style.display = 'block';
+    }
+
+    window.restartGame = function() {
+        enemies = []; particles = []; score = 0; frames = 0;
+        player.weaponTier = 0; player.attackTimer = 0; player.dir = 1;
+        state = 'PLAYING'; gameOverUI.style.display = 'none';
+    };
+
+    function loop() { update(); draw(); requestAnimationFrame(loop); }
+    canvas.addEventListener('mousedown', handleInput);
+    canvas.addEventListener('touchstart', handleInput, {passive: false});
+    document.fonts.ready.then(() => { loop(); });
+</script>
+</body>
+</html>
