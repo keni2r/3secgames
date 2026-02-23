@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>K15: Fruit Slam (Duel)</title>
+    <style>
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body {
+            margin: 0; padding: 0; width: 100vw; height: 100vh;
+            overflow: hidden; font-family: 'Arial Black', sans-serif;
+            background-color: #111; touch-action: none; user-select: none;
+            display: flex; flex-direction: column;
+        }
+
+        /* 상/하단 플레이어 터치 구역 */
+        .tap-area {
+            position: relative; width: 100%; height: 50%;
+            display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+            padding-bottom: 20px; cursor: pointer; transition: background 0.1s;
+        }
+        .tap-area:active { filter: brightness(0.8); }
+
+        #p1-area { background-color: #e74c3c; transform: rotate(180deg); }
+        #p2-area { background-color: #3498db; }
+
+        /* HP 하트 표시 */
+        .hp-bar {
+            font-size: 3rem; letter-spacing: 10px;
+            filter: drop-shadow(0 5px 5px rgba(0,0,0,0.5));
+            pointer-events: none;
+        }
+
+        /* 중앙 테이블 (카드 등장 위치) */
+        #table-center {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 240px; height: 240px; background: #ecf0f1; border-radius: 20px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.6), inset 0 0 15px rgba(0,0,0,0.2);
+            display: flex; justify-content: center; align-items: center;
+            z-index: 5; border: 8px solid #bdc3c7; overflow: hidden;
+        }
+
+        /* 과일 이모지 렌더링 (주사위 패턴을 위한 3x3 그리드) */
+        #fruit-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
+            width: 80%; height: 80%; gap: 5px;
+            transition: transform 0.05s;
+        }
+        #fruit-grid div {
+            display: flex; justify-content: center; align-items: center;
+            font-size: 3.5rem; line-height: 1; filter: drop-shadow(0 4px 4px rgba(0,0,0,0.3));
+        }
+        
+        /* 카드 넘어가는 애니메이션 */
+        .card-flip { animation: flip 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94) both; }
+        @keyframes flip { 0% { transform: scaleY(0) scale(1.1); } 100% { transform: scaleY(1) scale(1); } }
+
+        /* 상태 피드백 텍스트 */
+        .status-text {
+            position: absolute; top: 50%; width: 100%; text-align: center;
+            font-size: 4rem; font-weight: 900; color: #fff; z-index: 10;
+            pointer-events: none; opacity: 0; text-transform: uppercase;
+            text-shadow: 0 5px 15px rgba(0,0,0,0.8); margin-top: -30px;
+        }
+        
+        #status-p1 { transform: rotate(180deg); top: 25%; }
+        #status-p2 { top: 75%; }
+
+        .pop-status { animation: popStatus 1s forwards; }
+        @keyframes popStatus { 
+            0% { transform: scale(0.5); opacity: 1; } 
+            20% { transform: scale(1.2); opacity: 1; } 
+            100% { transform: scale(1); opacity: 0; } 
+        }
+
+        /* 타격 이펙트 (배경 번쩍임) */
+        .flash-hit { animation: flashHit 0.3s forwards; }
+        @keyframes flashHit { 0% { background-color: #fff; } }
+        .flash-error { animation: flashErr 0.3s forwards; }
+        @keyframes flashErr { 0% { background-color: #000; } }
+
+        /* 오버레이 UI (시작/결과) */
+        #overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.85); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 20;
+        }
+        #overlay h1 { color: #fff; font-size: 3.5rem; margin-bottom: 10px; text-align: center; }
+        #overlay p { font-size: 1.2rem; color: #ccc; margin-bottom: 30px; text-align: center; line-height: 1.5; }
+        #start-btn {
+            padding: 20px 50px; font-size: 1.5rem; font-weight: bold; background: #fff;
+            color: #000; border: none; border-radius: 50px; cursor: pointer; box-shadow: 0 6px 0 #999;
+        }
+        #start-btn:active { transform: translateY(6px); box-shadow: none; }
+    </style>
+</head>
+<body>
+
+    <div id="p1-area" class="tap-area">
+        <div class="hp-bar" id="p1-hp">❤️❤️❤️</div>
+        <div id="status-p1" class="status-text"></div>
+    </div>
+
+    <div id="p2-area" class="tap-area">
+        <div class="hp-bar" id="p2-hp">❤️❤️❤️</div>
+        <div id="status-p2" class="status-text"></div>
+    </div>
+
+    <div id="table-center">
+        <div id="fruit-grid"></div>
+    </div>
+
+    <div id="overlay">
+        <h1 id="title-text">FRUIT<br>DUEL</h1>
+        <p>Smash when exactly<br><b>FIVE (5)</b> fruits appear!<br><br>⚠️ BEWARE OF BOMBS (💣) ⚠️</p>
+        <button id="start-btn">READY</button>
+    </div>
+
+    <script>
+        const p1Area = document.getElementById('p1-area');
+        const p2Area = document.getElementById('p2-area');
+        const p1Hp = document.getElementById('p1-hp');
+        const p2Hp = document.getElementById('p2-hp');
+        const fruitGrid = document.getElementById('fruit-grid');
+        const statusP1 = document.getElementById('status-p1');
+        const statusP2 = document.getElementById('status-p2');
+        const overlay = document.getElementById('overlay');
+        const startBtn = document.getElementById('start-btn');
+        const titleText = document.getElementById('title-text');
+
+        let isPlaying = false;
+        let isPaused = false;
+        
+        // 게임 상태
+        let currentCount = 0; 
+        let isBomb = false;
+        let hp = [3, 3]; // [P1 HP, P2 HP]
+        const TARGET_COUNT = 5; // 목표 개수
+        
+        // 가속 시스템용 타이머
+        let cardTimer;
+        let currentSpeed = 900; // 초기 카드 넘어가는 속도 (ms)
+        const MIN_SPEED = 350; // 최대 속도 한계
+
+        const fruits = ['🍎', '🍌', '🍇', '🍉'];
+
+        // --- 웹 오디오 API ---
+        let audioCtx;
+        function initAudio() {
+            if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playSound(type) {
+            if(!audioCtx) return;
+            const now = audioCtx.currentTime;
+            const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            
+            if(type === 'ding') { // 정답 타격 (경쾌한 금속음)
+                osc.type = 'sine'; osc.frequency.setValueAtTime(1000, now); osc.frequency.exponentialRampToValueAtTime(200, now + 0.5);
+                gain.gain.setValueAtTime(1.0, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+                osc.start(now); osc.stop(now + 0.5);
+            } else if(type === 'buzz') { // 오답 감점
+                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, now); osc.frequency.exponentialRampToValueAtTime(50, now + 0.3);
+                gain.gain.setValueAtTime(0.5, now); gain.gain.linearRampToValueAtTime(0, now + 0.3);
+                osc.start(now); osc.stop(now + 0.3);
+            } else if(type === 'boom') { // 폭탄 터치 (낮은 굉음)
+                osc.type = 'square'; osc.frequency.setValueAtTime(100, now); osc.frequency.exponentialRampToValueAtTime(20, now + 0.5);
+                gain.gain.setValueAtTime(1.0, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+                osc.start(now); osc.stop(now + 0.5);
+            } else if(type === 'flip') { // 카드 휙휙
+                osc.type = 'triangle'; osc.frequency.setValueAtTime(300, now);
+                gain.gain.setValueAtTime(0.1, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+                osc.start(now); osc.stop(now + 0.05);
+            }
+        }
+
+        // 주사위 패턴으로 이모지 배치 (시각적 직관성을 위해 3x3 배열 사용)
+        function getDicePatternHTML(count, emoji, bomb) {
+            let grid = Array(9).fill('');
+            if (bomb) {
+                grid[4] = '💣'; // 폭탄은 무조건 정중앙 1개
+            } else {
+                if(count === 1) grid[4] = emoji;
+                if(count === 2) { grid[0] = emoji; grid[8] = emoji; }
+                if(count === 3) { grid[0] = emoji; grid[4] = emoji; grid[8] = emoji; }
+                if(count === 4) { grid[0]=emoji; grid[2]=emoji; grid[6]=emoji; grid[8]=emoji; }
+                if(count === 5) { grid[0]=emoji; grid[2]=emoji; grid[4]=emoji; grid[6]=emoji; grid[8]=emoji; }
+            }
+            return grid.map(e => `<div>${e}</div>`).join('');
+        }
+
+        // 다음 카드 렌더링
+        function nextCard() {
+            if(!isPlaying || isPaused) return;
+            playSound('flip');
+            
+            let rand = Math.random();
+            isBomb = false;
+
+            // 확률: 15% 폭탄, 25% 정답(5개), 60% 오답(1~4개)
+            if (rand < 0.15) {
+                isBomb = true;
+                currentCount = 1;
+            } else if (rand < 0.40) {
+                currentCount = TARGET_COUNT;
+            } else {
+                currentCount = Math.floor(Math.random() * 4) + 1; // 1~4
+            }
+
+            const selectedFruit = fruits[Math.floor(Math.random() * fruits.length)];
+            fruitGrid.innerHTML = getDicePatternHTML(currentCount, selectedFruit, isBomb);
+            
+            // 애니메이션 재적용
+            fruitGrid.classList.remove('card-flip');
+            void fruitGrid.offsetWidth; // reflow
+            fruitGrid.classList.add('card-flip');
+
+            // 점진적 가속 시스템
+            currentSpeed = Math.max(MIN_SPEED, currentSpeed - 30);
+            cardTimer = setTimeout(nextCard, currentSpeed);
+        }
+
+        function updateHP() {
+            let h1 = '', h2 = '';
+            for(let i=0; i<3; i++) h1 += i < hp[0] ? '❤️' : '🖤';
+            for(let i=0; i<3; i++) h2 += i < hp[1] ? '❤️' : '🖤';
+            p1Hp.innerText = h1; p2Hp.innerText = h2;
+        }
+
+        function showStatus(playerIndex, text, color) {
+            let el = playerIndex === 0 ? statusP1 : statusP2;
+            el.innerText = text; el.style.color = color;
+            el.classList.remove('pop-status');
+            void el.offsetWidth;
+            el.classList.add('pop-status');
+        }
+
+        function gameOver() {
+            isPlaying = false;
+            clearTimeout(cardTimer);
+            let winner = hp[0] <= 0 ? "BLUE" : "RED";
+            let color = hp[0] <= 0 ? "#3498db" : "#e74c3c";
+            
+            setTimeout(() => {
+                overlay.style.display = 'flex';
+                // 승자가 마주보는 사람일 수 있으므로 글자 회전
+                titleText.style.transform = winner === "RED" ? "rotate(180deg)" : "rotate(0deg)";
+                titleText.innerHTML = `${winner} WINS!`;
+                titleText.style.color = color;
+                startBtn.innerText = "REMATCH";
+            }, 1000);
+        }
+
+        function handleTap(playerIndex) {
+            if(!isPlaying || isPaused) return;
+
+            isPaused = true;
+            clearTimeout(cardTimer);
+            let otherPlayer = playerIndex === 0 ? 1 : 0;
+            let area = playerIndex === 0 ? p1Area : p2Area;
+
+            if(isBomb) {
+                // 폭탄 터치 -> 자신 체력 감소
+                hp[playerIndex]--;
+                playSound('boom');
+                showStatus(playerIndex, "BOMB!!", "#000");
+                area.classList.add('flash-error');
+                if(navigator.vibrate) navigator.vibrate([200, 50, 200]); 
+            } else if(currentCount === TARGET_COUNT) {
+                // 정답 (5개) 터치 -> 상대방 체력 감소
+                hp[otherPlayer]--;
+                playSound('ding');
+                showStatus(playerIndex, "SMASH!", "#ffd700");
+                let opponentArea = playerIndex === 0 ? p2Area : p1Area;
+                opponentArea.classList.add('flash-hit'); // 상대방 화면 번쩍
+                if(navigator.vibrate) navigator.vibrate(100); 
+            } else {
+                // 오답 터치 -> 자신 체력 감소
+                hp[playerIndex]--;
+                playSound('buzz');
+                showStatus(playerIndex, "MISS!", "#fff");
+                area.classList.add('flash-error');
+                if(navigator.vibrate) navigator.vibrate(200); 
+            }
+
+            updateHP();
+            
+            setTimeout(() => {
+                p1Area.classList.remove('flash-hit', 'flash-error');
+                p2Area.classList.remove('flash-hit', 'flash-error');
+            }, 300);
+
+            if(hp[0] <= 0 || hp[1] <= 0) {
+                gameOver();
+                return;
+            }
+
+            // 1.2초 대기 후 속도 초기화하여 재개
+            setTimeout(() => {
+                currentSpeed = 900; 
+                isPaused = false;
+                nextCard();
+            }, 1200);
+        }
+
+        // 이벤트 바인딩
+        p1Area.addEventListener('touchstart', (e) => { e.preventDefault(); handleTap(0); }, {passive: false});
+        p1Area.addEventListener('mousedown', () => handleTap(0));
+        p2Area.addEventListener('touchstart', (e) => { e.preventDefault(); handleTap(1); }, {passive: false});
+        p2Area.addEventListener('mousedown', () => handleTap(1));
+
+        startBtn.addEventListener('click', () => {
+            initAudio();
+            isPlaying = true; isPaused = false;
+            hp = [3, 3]; currentSpeed = 900;
+            titleText.style.transform = "rotate(0deg)";
+            updateHP();
+            overlay.style.display = 'none';
+            
+            setTimeout(nextCard, 1000);
+        });
+
+    </script>
+</body>
+</html>

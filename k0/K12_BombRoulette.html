@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>K12: Bomb Roulette</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+        body {
+            margin: 0; padding: 0; 
+            width: 100vw; height: 100vh;
+            overflow: hidden; font-family: 'Arial Black', sans-serif;
+            background-color: #1a1a1a; color: #fff;
+            touch-action: none; user-select: none;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+
+        /* 화면 흔들림 효과 (폭발 시) */
+        .shake-hard {
+            animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+            background-color: #ff0000 !important; /* 폭발 시 붉은 배경 */
+        }
+        @keyframes shake {
+            0%, 100% { transform: translate3d(0, 0, 0); }
+            10%, 30%, 50%, 70%, 90% { transform: translate3d(-20px, 20px, 0) rotate(-5deg); }
+            20%, 40%, 60%, 80% { transform: translate3d(20px, -20px, 0) rotate(5deg); }
+        }
+
+        /* 폭탄 그래픽 */
+        #bomb-container {
+            flex: 1;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            width: 100%;
+        }
+        #bomb-icon {
+            font-size: 8rem;
+            filter: drop-shadow(0 10px 20px rgba(0,0,0,0.5));
+            transition: transform 0.1s;
+        }
+        
+        /* 심장 박동 애니메이션 */
+        .heartbeat {
+            animation: beat 1s infinite alternate;
+        }
+        @keyframes beat {
+            0% { transform: scale(1); filter: drop-shadow(0 0 10px #ff0000); }
+            100% { transform: scale(1.1); filter: drop-shadow(0 0 30px #ff0000); }
+        }
+
+        .exploded-bomb {
+            font-size: 10rem !important;
+            animation: pop 0.5s forwards !important;
+        }
+        @keyframes pop {
+            0% { transform: scale(0.5); opacity: 1; }
+            50% { transform: scale(1.5); opacity: 1; }
+            100% { transform: scale(1); opacity: 0; }
+        }
+
+        /* 전선(버튼) 영역 */
+        #wire-container {
+            width: 100%;
+            max-width: 400px;
+            padding: 20px;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .wire-btn {
+            background: linear-gradient(180deg, #444, #222);
+            border: 3px solid #666;
+            border-radius: 10px;
+            height: 80px;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 1.5rem; font-weight: bold; color: #fff;
+            cursor: pointer; box-shadow: 0 5px 0 #000;
+            transition: 0.1s;
+        }
+        .wire-btn:active {
+            transform: translateY(5px); box-shadow: 0 0 0 #000;
+        }
+        
+        /* 잘린 전선 (안전) */
+        .cut-safe {
+            background: #2a2a2a; border-color: #111; color: #444;
+            box-shadow: none; transform: translateY(5px); pointer-events: none;
+        }
+        /* 폭발한 전선 (꽝) */
+        .cut-boom {
+            background: #ff0000; border-color: #aa0000; color: #fff;
+            box-shadow: 0 0 20px #ff0000; transform: translateY(5px); pointer-events: none;
+        }
+
+        /* 오버레이 UI */
+        #overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 10;
+        }
+        #overlay h1 {
+            color: #ff3333; font-size: 3.5rem; margin-bottom: 10px; text-shadow: 0 0 20px #ff0000;
+            text-align: center; line-height: 1.2;
+        }
+        #start-btn {
+            padding: 20px 40px; font-size: 1.5rem; font-weight: bold;
+            background: #ffcc00; color: #000; border: none; border-radius: 30px;
+            cursor: pointer; margin-top: 30px; box-shadow: 0 8px 0 #ccaa00;
+        }
+        #start-btn:active { transform: translateY(8px); box-shadow: none; }
+
+        .smoke {
+            position: absolute; font-size: 4rem; pointer-events: none;
+            animation: floatUp 1s ease-out forwards;
+        }
+        @keyframes floatUp {
+            0% { transform: translateY(0) scale(0.5); opacity: 1; }
+            100% { transform: translateY(-200px) scale(2); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="bomb-container">
+        <div id="bomb-icon">💣</div>
+    </div>
+
+    <div id="wire-container">
+        </div>
+
+    <div id="overlay">
+        <h1 id="title-text">BOMB<br>ROULETTE</h1>
+        <button id="start-btn">START GAME</button>
+    </div>
+
+    <script>
+        const bombIcon = document.getElementById('bomb-icon');
+        const wireContainer = document.getElementById('wire-container');
+        const overlay = document.getElementById('overlay');
+        const startBtn = document.getElementById('start-btn');
+        const titleText = document.getElementById('title-text');
+
+        let isPlaying = false;
+        let wireCount = 8; // 총 전선 개수
+        let bombIndex = -1; // 폭탄이 숨겨진 위치
+        let cutCount = 0; // 자른 횟수
+        let baseBeatDuration = 1.0; // 초기 심장박동 속도 (초)
+
+        // --- 오디오 시스템 (Web Audio API) ---
+        let audioCtx;
+        function initAudio() {
+            if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playSound(type) {
+            if(!audioCtx) return;
+            const now = audioCtx.currentTime;
+            
+            if(type === 'safe') {
+                // 안전할 때 나는 틱! 소리 (안도의 한숨 대신 긴장감을 주는 금속음)
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(1000, now);
+                osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.start(now); osc.stop(now + 0.1);
+            } 
+            else if(type === 'boom') {
+                // 폭발음 (화이트 노이즈 버퍼를 이용한 굉음 생성)
+                const bufferSize = audioCtx.sampleRate * 2; // 2초
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1; // 노이즈 생성
+                }
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+
+                // 로우패스 필터로 먹먹하고 묵직한 폭발음 만들기
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(1000, now);
+                filter.frequency.exponentialRampToValueAtTime(100, now + 1.5);
+
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(1.5, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 1.5);
+
+                noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+                noise.start(now);
+            }
+        }
+
+        // 폭발 파티클 (연기)
+        function createSmoke() {
+            for(let i=0; i<10; i++) {
+                const smoke = document.createElement('div');
+                smoke.innerText = '💨';
+                smoke.className = 'smoke';
+                smoke.style.left = 50 + (Math.random() * 20 - 10) + '%';
+                smoke.style.top = 40 + (Math.random() * 20 - 10) + '%';
+                smoke.style.animationDuration = (0.5 + Math.random()) + 's';
+                document.body.appendChild(smoke);
+                setTimeout(() => smoke.remove(), 1500);
+            }
+        }
+
+        // 전선(버튼) 클릭 처리
+        function cutWire(index, btnElement) {
+            if(!isPlaying) return;
+
+            if(index === bombIndex) {
+                // 꽝! 폭탄 터짐
+                isPlaying = false;
+                btnElement.classList.add('cut-boom');
+                btnElement.innerText = "BOOM!";
+                
+                bombIcon.innerText = "💥";
+                bombIcon.classList.remove('heartbeat');
+                bombIcon.classList.add('exploded-bomb');
+                
+                document.body.classList.add('shake-hard');
+                
+                playSound('boom');
+                createSmoke();
+                
+                // 모바일 진동 지원 기기에서 강력한 진동 패턴 발생
+                if(navigator.vibrate) {
+                    navigator.vibrate([500, 100, 500, 100, 1000]); 
+                }
+
+                // 2초 후 결과 화면
+                setTimeout(() => {
+                    overlay.style.display = 'flex';
+                    titleText.innerHTML = "YOU<br>DIED!";
+                    titleText.style.color = "#ff0000";
+                    startBtn.innerText = "PLAY AGAIN";
+                    document.body.classList.remove('shake-hard');
+                }, 2000);
+
+            } else {
+                // 안전!
+                cutCount++;
+                btnElement.classList.add('cut-safe');
+                btnElement.innerText = "SAFE";
+                playSound('safe');
+                
+                // 안전할 때마다 심장 박동(애니메이션 속도)이 빨라짐 = 긴장감 상승
+                baseBeatDuration = Math.max(0.2, baseBeatDuration - 0.12);
+                bombIcon.style.animationDuration = baseBeatDuration + 's';
+                
+                // 약한 진동 (다음 사람에게 넘기라는 신호)
+                if(navigator.vibrate) navigator.vibrate(50);
+            }
+        }
+
+        // 게임 초기화 및 시작
+        function startGame() {
+            initAudio();
+            isPlaying = true;
+            cutCount = 0;
+            baseBeatDuration = 1.0;
+            
+            // UI 리셋
+            overlay.style.display = 'none';
+            document.body.classList.remove('shake-hard');
+            bombIcon.innerText = "💣";
+            bombIcon.classList.remove('exploded-bomb');
+            bombIcon.classList.add('heartbeat');
+            bombIcon.style.animationDuration = baseBeatDuration + 's';
+
+            // 꽝 위치 랜덤 지정 (0 ~ 7)
+            bombIndex = Math.floor(Math.random() * wireCount);
+
+            // 전선 버튼 생성
+            wireContainer.innerHTML = '';
+            for(let i=0; i<wireCount; i++) {
+                const btn = document.createElement('div');
+                btn.className = 'wire-btn';
+                btn.innerText = `WIRE ${i+1}`;
+                
+                // 터치와 클릭 이벤트 모두 지원
+                btn.addEventListener('mousedown', () => cutWire(i, btn));
+                btn.addEventListener('touchstart', (e) => { e.preventDefault(); cutWire(i, btn); }, {passive: false});
+                
+                wireContainer.appendChild(btn);
+            }
+        }
+
+        startBtn.addEventListener('click', startGame);
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>K13: High-Five Sync</title>
+    <style>
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body {
+            margin: 0; padding: 0; width: 100vw; height: 100vh;
+            overflow: hidden; font-family: 'Arial Black', sans-serif;
+            background-color: #222; color: #fff; touch-action: none; user-select: none;
+            display: flex; flex-direction: column;
+        }
+
+        /* 중앙 리듬 가이드 (메트로놈 역할) */
+        #center-zone {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100%; height: 10px; background: rgba(255,255,255,0.1);
+            z-index: 5; display: flex; justify-content: center; align-items: center;
+            pointer-events: none;
+        }
+        #rhythm-circle {
+            width: 60px; height: 60px; border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            animation: pulse 1s infinite alternate ease-in-out;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.8); background: rgba(255, 255, 255, 0.1); }
+            100% { transform: scale(1.5); background: rgba(255, 215, 0, 0.6); box-shadow: 0 0 20px #ffd700; }
+        }
+
+        /* 플레이어 영역 */
+        .player-area {
+            position: relative; flex: 1; width: 100%;
+            display: flex; justify-content: center; align-items: flex-end;
+            padding-bottom: 20px; cursor: pointer; transition: background 0.2s;
+        }
+        #p1-area { background-color: #ff4a4a; transform: rotate(180deg); }
+        #p2-area { background-color: #4a90e2; }
+
+        /* 손바닥 아이콘 */
+        .hand {
+            font-size: 6rem; transition: transform 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            filter: drop-shadow(0 10px 10px rgba(0,0,0,0.3));
+        }
+        
+        /* 터치 시 중앙으로 뻗는 애니메이션 클래스 */
+        .reach { transform: translateY(-20vh) scale(1.2); }
+
+        /* 결과 텍스트 */
+        .result-text {
+            position: absolute; top: 30%; width: 100%; text-align: center;
+            font-size: 3rem; font-weight: 900; opacity: 0; pointer-events: none;
+            text-transform: uppercase; text-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            transition: opacity 0.3s, transform 0.3s;
+        }
+        .show-result { opacity: 1; transform: translateY(-20px); }
+
+        /* 파티클 효과 */
+        .particle {
+            position: absolute; font-size: 2rem; pointer-events: none;
+            animation: explode 0.8s forwards ease-out;
+        }
+        @keyframes explode {
+            0% { opacity: 1; transform: translate(0, 0) scale(1); }
+            100% { opacity: 0; transform: translate(var(--tx), var(--ty)) scale(1.5); }
+        }
+
+        /* 오버레이 UI */
+        #overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.85); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 10;
+        }
+        #overlay h1 { color: #ffd700; font-size: 3rem; margin-bottom: 10px; text-align: center; }
+        #overlay p { font-size: 1.2rem; color: #ccc; margin-bottom: 30px; text-align: center; }
+        #start-btn {
+            padding: 15px 40px; font-size: 1.5rem; font-weight: bold; background: #fff;
+            color: #000; border: none; border-radius: 50px; cursor: pointer; box-shadow: 0 5px 0 #aaa;
+        }
+        #start-btn:active { transform: translateY(5px); box-shadow: none; }
+    </style>
+</head>
+<body>
+
+    <div id="center-zone"><div id="rhythm-circle"></div></div>
+
+    <div id="p1-area" class="player-area">
+        <div class="result-text" id="res1"></div>
+        <div class="hand" id="hand1">🖐️</div>
+    </div>
+
+    <div id="p2-area" class="player-area">
+        <div class="result-text" id="res2"></div>
+        <div class="hand" id="hand2">🖐️</div>
+    </div>
+
+    <div id="overlay">
+        <h1>HIGH-FIVE<br>SYNC</h1>
+        <p>Make eye contact.<br>Tap EXACTLY at the same time!</p>
+        <button id="start-btn">READY</button>
+    </div>
+
+    <script>
+        const p1Area = document.getElementById('p1-area');
+        const p2Area = document.getElementById('p2-area');
+        const hand1 = document.getElementById('hand1');
+        const hand2 = document.getElementById('hand2');
+        const res1 = document.getElementById('res1');
+        const res2 = document.getElementById('res2');
+        const overlay = document.getElementById('overlay');
+        const startBtn = document.getElementById('start-btn');
+        const rhythmCircle = document.getElementById('rhythm-circle');
+
+        let isPlaying = false;
+        let p1Time = 0;
+        let p2Time = 0;
+        const SYNC_TOLERANCE = 200; // 200ms 이내에 같이 누르면 성공! (관대한 판정)
+
+        // --- 오디오 시스템 (웹 오디오 API) ---
+        let audioCtx;
+        function initAudio() {
+            if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playSound(type) {
+            if(!audioCtx) return;
+            const now = audioCtx.currentTime;
+            
+            if(type === 'clap') {
+                // 하이파이브 (짝!) 소리: 노이즈와 필터를 사용
+                const bufferSize = audioCtx.sampleRate * 0.5;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'bandpass'; filter.frequency.value = 1000;
+
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(1.5, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+
+                noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+                noise.start(now);
+
+            } else if(type === 'fail') {
+                // 민망한 빗나감 소리 (띠용~)
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(400, now);
+                osc.frequency.exponentialRampToValueAtTime(100, now + 0.4);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.5);
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.start(now); osc.stop(now + 0.5);
+            }
+        }
+
+        function createParticles(emoji, amount) {
+            for(let i=0; i<amount; i++) {
+                const p = document.createElement('div');
+                p.innerText = emoji;
+                p.className = 'particle';
+                p.style.left = '50%'; p.style.top = '50%';
+                
+                // 랜덤 방향 설정
+                const angle = Math.random() * Math.PI * 2;
+                const distance = 50 + Math.random() * 100;
+                p.style.setProperty('--tx', Math.cos(angle) * distance + 'px');
+                p.style.setProperty('--ty', Math.sin(angle) * distance + 'px');
+                
+                document.body.appendChild(p);
+                setTimeout(() => p.remove(), 800);
+            }
+        }
+
+        function showResult(isSuccess, diff) {
+            isPlaying = false;
+            rhythmCircle.style.animation = 'none'; // 리듬 멈춤
+
+            if(isSuccess) {
+                playSound('clap');
+                createParticles('✨', 10);
+                createParticles('❤️', 5);
+                
+                res1.innerText = "PERFECT!"; res1.style.color = "#ffd700";
+                res2.innerText = "PERFECT!"; res2.style.color = "#ffd700";
+                
+                if(navigator.vibrate) navigator.vibrate([100, 50, 100]); // 경쾌한 진동
+            } else {
+                playSound('fail');
+                createParticles('💨', 5); // 허공을 가르는 연기
+                
+                // 누가 더 빨랐는지 분석하여 민망함 부여
+                if(p1Time > 0 && p2Time === 0) {
+                    res1.innerText = "TOO FAST..."; res1.style.color = "#ccc";
+                    res2.innerText = "TOO SLOW!"; res2.style.color = "#ff6666";
+                } else if(p2Time > 0 && p1Time === 0) {
+                    res2.innerText = "TOO FAST..."; res2.style.color = "#ccc";
+                    res1.innerText = "TOO SLOW!"; res1.style.color = "#ff6666";
+                } else {
+                    res1.innerText = "MISSED!"; res1.style.color = "#ccc";
+                    res2.innerText = "MISSED!"; res2.style.color = "#ccc";
+                }
+                if(navigator.vibrate) navigator.vibrate(300); // 묵직한 진동
+            }
+
+            res1.classList.add('show-result');
+            res2.classList.add('show-result');
+
+            // 2.5초 후 초기화 및 재시작 준비
+            setTimeout(() => {
+                hand1.classList.remove('reach'); hand2.classList.remove('reach');
+                res1.classList.remove('show-result'); res2.classList.remove('show-result');
+                p1Time = 0; p2Time = 0;
+                rhythmCircle.style.animation = 'pulse 1s infinite alternate ease-in-out';
+                isPlaying = true;
+            }, 2500);
+        }
+
+        function handleTap(player) {
+            if(!isPlaying) return;
+            const now = Date.now();
+
+            if(player === 1 && p1Time === 0) {
+                p1Time = now;
+                hand1.classList.add('reach');
+            } else if(player === 2 && p2Time === 0) {
+                p2Time = now;
+                hand2.classList.add('reach');
+            }
+
+            // 둘 다 눌렀을 때
+            if(p1Time > 0 && p2Time > 0) {
+                const diff = Math.abs(p1Time - p2Time);
+                if(diff <= SYNC_TOLERANCE) showResult(true, diff);
+                else showResult(false, diff);
+            } 
+            // 혼자만 눌렀을 때 (대기 시간 0.2초 부여, 그 안에 상대가 안 누르면 실패)
+            else {
+                setTimeout(() => {
+                    // 0.2초가 지났는데도 상대방 기록이 0이면 혼자 허공에 손을 뻗은 것
+                    if((player === 1 && p2Time === 0) || (player === 2 && p1Time === 0)) {
+                        showResult(false, 999);
+                    }
+                }, SYNC_TOLERANCE);
+            }
+        }
+
+        // 마우스 및 터치 이벤트 연결
+        p1Area.addEventListener('touchstart', (e) => { e.preventDefault(); handleTap(1); }, {passive: false});
+        p1Area.addEventListener('mousedown', () => handleTap(1));
+        p2Area.addEventListener('touchstart', (e) => { e.preventDefault(); handleTap(2); }, {passive: false});
+        p2Area.addEventListener('mousedown', () => handleTap(2));
+
+        startBtn.addEventListener('click', () => {
+            initAudio();
+            overlay.style.display = 'none';
+            p1Time = 0; p2Time = 0;
+            isPlaying = true;
+        });
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Micro Driller: Abyss Worm</title>
+    <style>
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body {
+            margin: 0; padding: 0; width: 100vw; height: 100vh;
+            overflow: hidden; font-family: 'Arial Black', sans-serif;
+            background-color: #000; touch-action: none; user-select: none;
+            display: flex; justify-content: center; align-items: center;
+        }
+
+        #game-container {
+            width: 100%; max-width: 480px; height: 100%; max-height: 900px;
+            position: relative; overflow: hidden;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+            background-color: #87CEEB;
+        }
+
+        canvas { display: block; width: 100%; height: 100%; }
+
+        /* 상단 UI */
+        #ui-bar {
+            position: absolute; top: 0; left: 0; width: 100%;
+            padding: 15px 20px; display: flex; justify-content: space-between;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.9), rgba(0,0,0,0));
+            color: #fff; font-size: 1.2rem; z-index: 10; pointer-events: none;
+            text-shadow: 0 2px 4px #000;
+        }
+        .ui-text span { color: #ffd700; }
+        #lv-text { color: #00ffff; }
+
+        /* 오버레이 (시작/결과) */
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: rgba(0,0,0,0.85); color: #fff; z-index: 20;
+        }
+        
+        #title-text { font-size: 3.2rem; color: #ffd700; text-align: center; margin-bottom: 10px; text-shadow: 0 5px 15px #ff8800; line-height: 1.1;}
+        .star-box { font-size: 3rem; color: #444; margin: 10px 0; letter-spacing: 5px; }
+        .star-earned { color: #ffd700; text-shadow: 0 0 20px #ffd700; }
+        
+        .start-btn {
+            padding: 15px 40px; font-size: 1.5rem; font-weight: bold; margin-top: 20px;
+            background: #ffd700; color: #000; border: none; border-radius: 30px;
+            cursor: pointer; box-shadow: 0 5px 0 #ccaa00;
+        }
+        .start-btn:active { transform: translateY(5px); box-shadow: none; }
+
+        .guide-text { font-size: 1rem; color: #ccc; text-align: center; line-height: 1.5; margin-bottom: 15px; }
+        .guide-text b { color: #fff; }
+        .guide-text .warn { color: #ff4444; }
+        .guide-text .highlight { color: #00ffff; }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="ui-bar">
+            <div class="ui-text">DEP: <span id="depth-text">0m</span></div>
+            <div class="ui-text">LV: <span id="lv-text">1</span></div>
+            <div class="ui-text">GLD: <span id="gold-text">0</span></div>
+        </div>
+
+        <canvas id="gameCanvas"></canvas>
+
+        <div id="overlay">
+            <h1 id="title-text">MICRO<br>DRILLER</h1>
+            <div id="star-display" class="star-box" style="display:none;">☆☆☆</div>
+            <div class="guide-text" id="guide-msg">
+                👈 TAP LEFT | TAP RIGHT 👉<br>👇 TAP BOTTOM TO DIG<br><br>
+                <b>Obstacles:</b><br>
+                🪨 Stone (3 Hits) | ⬛ Bedrock (10 Hits)<br><br>
+                <span class="highlight">Every 100 Gold = Auto Speed Upgrade!</span><br>
+                <span class="warn">A WORM follows your path! (Speeds up every 50m)</span><br>Reach 1000m to WIN.
+            </div>
+            <button class="start-btn" id="start-btn">DIG IN!</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('game-container');
+        const depthText = document.getElementById('depth-text');
+        const goldText = document.getElementById('gold-text');
+        const lvText = document.getElementById('lv-text');
+        const overlay = document.getElementById('overlay');
+        const startBtn = document.getElementById('start-btn');
+        const titleText = document.getElementById('title-text');
+        const guideMsg = document.getElementById('guide-msg');
+        const starDisplay = document.getElementById('star-display');
+
+        let width, height, blockSize;
+        const COLS = 9; 
+        let isPlaying = false, isGameOver = false;
+        let frame = 0, cameraY = 0, targetCameraY = 0;
+        let goldCount = 0, maxDepth = 0;
+        
+        const grid = new Map();
+        let golds = []; let particles = []; let floatingTexts = [];
+        
+        // 지렁이 및 이동 기록 변수
+        let worm = null;
+        const WORM_SPAWN_DEPTH = 50;
+        const WORM_SEGMENTS = 20; 
+        let playerPath = []; 
+
+        // 두더지 상태
+        let player = { c: 4, r: -1, yOffset: 0, isFalling: false, actionFrame: 0, actionDir: 0, digCooldown: 0, moveCooldown: 0, glowFrame: 0 };
+
+        // 업그레이드 레벨
+        let upgradeLevel = 0; 
+        const digSpeeds = [60, 54, 48, 42, 36, 30]; 
+
+        const stageColors = [
+            '#8B4513', '#6B4226', '#5C4033', '#4A3B32', '#3b2f2f', 
+            '#5a1818', '#7a1818', '#991111', '#b31b1b', '#cc2900', 
+            '#ff4500' 
+        ];
+
+        // --- 텍스쳐 타일맵 생성기 (노이즈 패턴) ---
+        let texturePattern = null;
+        function initTextures() {
+            const tcv = document.createElement('canvas');
+            tcv.width = 128; tcv.height = 128;
+            const tcx = tcv.getContext('2d');
+            for(let i = 0; i < 4000; i++) {
+                tcx.fillStyle = Math.random() > 0.5 ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.08)';
+                let w = Math.random() * 2 + 1;
+                tcx.fillRect(Math.random() * 128, Math.random() * 128, w, w);
+            }
+            texturePattern = ctx.createPattern(tcv, 'repeat');
+        }
+
+        // --- 오디오 시스템 ---
+        let audioCtx;
+        function initAudio() {
+            if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playSound(type) {
+            if(!audioCtx) return;
+            const now = audioCtx.currentTime;
+            const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            
+            if(type === 'heavy_dig') { 
+                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(100, now); osc.frequency.exponentialRampToValueAtTime(20, now + 0.2);
+                gain.gain.setValueAtTime(0.7, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                osc.start(now); osc.stop(now + 0.2);
+            } else if(type === 'coin') { 
+                osc.type = 'sine'; osc.frequency.setValueAtTime(1000, now); osc.frequency.setValueAtTime(1500, now + 0.05);
+                gain.gain.setValueAtTime(0.3, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now); osc.stop(now + 0.3);
+            } else if(type === 'hit_stone') { 
+                osc.type = 'triangle'; osc.frequency.setValueAtTime(600, now); osc.frequency.exponentialRampToValueAtTime(200, now + 0.05);
+                gain.gain.setValueAtTime(0.5, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+                osc.start(now); osc.stop(now + 0.05);
+            } else if(type === 'break_stone') { 
+                osc.type = 'square'; osc.frequency.setValueAtTime(250, now); osc.frequency.exponentialRampToValueAtTime(50, now + 0.25);
+                gain.gain.setValueAtTime(0.7, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+                osc.start(now); osc.stop(now + 0.25);
+            } else if(type === 'hit_bedrock') { 
+                osc.type = 'sine'; osc.frequency.setValueAtTime(1200, now); osc.frequency.exponentialRampToValueAtTime(1800, now + 0.05);
+                gain.gain.setValueAtTime(0.6, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now); osc.stop(now + 0.1);
+            } else if(type === 'worm_hiss') { 
+                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(100, now); osc.frequency.linearRampToValueAtTime(200, now + 0.5);
+                gain.gain.setValueAtTime(0.2, now); gain.gain.linearRampToValueAtTime(0, now + 1.0);
+                osc.start(now); osc.stop(now + 1.0);
+            } else if(type === 'death') {
+                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(300, now); osc.frequency.exponentialRampToValueAtTime(50, now + 0.8);
+                gain.gain.setValueAtTime(0.5, now); gain.gain.linearRampToValueAtTime(0, now + 0.8);
+                osc.start(now); osc.stop(now + 0.8);
+            } else if(type === 'win') {
+                osc.type = 'triangle'; osc.frequency.setValueAtTime(400, now); osc.frequency.setValueAtTime(600, now+0.2); osc.frequency.setValueAtTime(800, now+0.4);
+                gain.gain.setValueAtTime(0.5, now); gain.gain.linearRampToValueAtTime(0, now + 1.0);
+                osc.start(now); osc.stop(now + 1.0);
+            } else if(type === 'levelup') {
+                osc.type = 'square'; osc.frequency.setValueAtTime(400, now); osc.frequency.setValueAtTime(800, now+0.1); osc.frequency.setValueAtTime(1200, now+0.2);
+                gain.gain.setValueAtTime(0.5, now); gain.gain.linearRampToValueAtTime(0, now + 0.6);
+                osc.start(now); osc.stop(now + 0.6);
+            }
+        }
+
+        function resize() {
+            width = container.clientWidth; height = container.clientHeight;
+            canvas.width = width; canvas.height = height;
+            blockSize = width / COLS;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        function getGoldAmount(depth) {
+            let weight = Math.min(1, depth / 1000); 
+            let power = 1 + weight * 3; 
+            let randVal = 1 - Math.pow(Math.random(), power);
+            return Math.floor(2 + randVal * 18); 
+        }
+
+        function getRow(r) {
+            if (r < 0) return null;
+            if (!grid.has(r)) {
+                let row = [];
+                let stage = Math.floor(r / 100);
+                
+                let stoneChance = Math.min(0.40, 0.05 + stage * 0.05);
+                let rockChance = Math.min(0.20, stage > 0 ? stage * 0.02 : 0);
+
+                for(let c=0; c<COLS; c++) {
+                    if (r === 0) row.push({ type: 2, isRevealed: true, hp: 1, hasGold: false });
+                    else {
+                        let rand = Math.random();
+                        let type = 1; let hp = 1; let hasGold = false;
+                        
+                        if (rand < rockChance) { type = 4; hp = 10; }
+                        else if (rand < rockChance + stoneChance) { type = 3; hp = 3; }
+                        else if (Math.random() < 0.25) { hasGold = true; } 
+
+                        row.push({ type: type, isRevealed: false, hp: hp, hasGold: hasGold });
+                    }
+                }
+                grid.set(r, row);
+            }
+            return grid.get(r);
+        }
+
+        function createParticles(x, y, color, type = 'dirt') {
+            let count, speedBase, sizeBase, lifeBase;
+            if (type === 'gold') { count = 15; speedBase = 5; sizeBase = 8; lifeBase = 1; }
+            else if (type === 'stone') { count = 20; speedBase = 6; sizeBase = 10; lifeBase = 1.2; } 
+            else { count = 12; speedBase = 4; sizeBase = 7; lifeBase = 1; } 
+
+            for(let i=0; i<count; i++) {
+                let angle = Math.random() * Math.PI * 2;
+                let speed = Math.random() * speedBase + 2;
+                let size = Math.random() * sizeBase + 3;
+                let life = lifeBase + Math.random() * 0.3;
+                
+                let pColor = color;
+                if(type === 'stone' && color === '#888') {
+                    let shade = Math.floor(Math.random() * 100 + 100);
+                    pColor = `rgb(${shade},${shade},${shade})`;
+                }
+
+                particles.push({
+                    x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 3,
+                    size: size, color: pColor, life: life, decay: Math.random() * 0.04 + 0.02
+                });
+            }
+        }
+
+        function createFloatingText(x, y, text, color) {
+            floatingTexts.push({ x, y, text, color, life: 1, vy: -1.5 });
+        }
+
+        function checkAutoUpgrade() {
+            let expectedLevel = Math.min(5, Math.floor(goldCount / 100));
+            if (expectedLevel > upgradeLevel) {
+                upgradeLevel = expectedLevel;
+                playSound('levelup');
+                player.glowFrame = 60; 
+                let pX = player.c * blockSize + blockSize/2;
+                let pY = player.r * blockSize;
+                createFloatingText(pX, pY - 20, `SPEED UP! LV.${upgradeLevel + 1}`, "#00ffff");
+                lvText.innerText = upgradeLevel + 1;
+            }
+        }
+
+        function handleInput(e) {
+            if (!isPlaying || isGameOver || player.isFalling) return;
+            e.preventDefault();
+            
+            let rect = canvas.getBoundingClientRect();
+            let clientX = (e.touches && e.touches.length > 0) ? e.touches[0].clientX : e.clientX;
+            let clientY = (e.touches && e.touches.length > 0) ? e.touches[0].clientY : e.clientY;
+            let xPos = clientX - rect.left; let yPos = clientY - rect.top;
+
+            let worldY = yPos + cameraY;
+            let clickC = Math.floor(xPos / blockSize);
+            let clickR = Math.floor(worldY / blockSize);
+
+            for (let i = golds.length - 1; i >= 0; i--) {
+                let g = golds[i];
+                if (g.active && g.c === clickC && g.r === clickR) {
+                    g.active = false;
+                    let amount = getGoldAmount(g.r);
+                    goldCount += amount; goldText.innerText = goldCount;
+                    playSound('coin');
+                    createParticles(g.c * blockSize + blockSize/2, g.r * blockSize + blockSize/2, '#ffd700', 'gold');
+                    createFloatingText(g.c * blockSize + blockSize/2, g.r * blockSize, `+${amount}`, "#ffd700");
+                    if(navigator.vibrate) navigator.vibrate(50);
+                    checkAutoUpgrade();
+                    return; 
+                }
+            }
+
+            let isBottomZone = yPos > height * 0.7; 
+            let acted = false; 
+
+            if (isBottomZone) {
+                let row = getRow(player.r + 1);
+                if (row && row[player.c].type > 0) {
+                    if (player.digCooldown > 0) return; 
+                    digBlock(player.c, player.r + 1);
+                    player.actionDir = 0; acted = true;
+                }
+            } else {
+                if (xPos < width / 2) {
+                    if (player.c > 0) {
+                        let targetC = player.c - 1; let row = getRow(player.r);
+                        if (row && row[targetC].type > 0) {
+                            if (player.digCooldown > 0) return; 
+                            digBlock(targetC, player.r);
+                            player.actionDir = -1; acted = true;
+                        } else if (player.moveCooldown <= 0) {
+                            player.c = targetC;
+                            player.actionDir = -1; player.moveCooldown = 10;
+                        }
+                    }
+                } else {
+                    if (player.c < COLS - 1) {
+                        let targetC = player.c + 1; let row = getRow(player.r);
+                        if (row && row[targetC].type > 0) {
+                            if (player.digCooldown > 0) return; 
+                            digBlock(targetC, player.r);
+                            player.actionDir = 1; acted = true;
+                        } else if (player.moveCooldown <= 0) {
+                            player.c = targetC;
+                            player.actionDir = 1; player.moveCooldown = 10;
+                        }
+                    }
+                }
+            }
+
+            if (acted) {
+                player.actionFrame = 12; 
+                player.digCooldown = digSpeeds[upgradeLevel];
+            }
+        }
+
+        canvas.addEventListener('mousedown', handleInput);
+        canvas.addEventListener('touchstart', handleInput, { passive: false });
+
+        function digBlock(c, r) {
+            let row = getRow(r);
+            if(!row || !row[c]) return;
+            let block = row[c];
+            if (block.type === 0) return;
+
+            let px = c * blockSize + blockSize/2;
+            let py = r * blockSize + blockSize/2;
+
+            if (!block.isRevealed && block.type !== 1) {
+                block.isRevealed = true;
+                if (block.type === 3 || block.type === 4) {
+                    block.hp--; 
+                    let pColor = block.type === 3 ? '#888' : '#2c3e50';
+                    let snd = block.type === 3 ? 'hit_stone' : 'hit_bedrock';
+                    playSound(snd); createParticles(px, py, pColor, 'stone');
+                    if(navigator.vibrate) navigator.vibrate(block.type===3?30:50);
+                    return;
+                }
+            }
+
+            if (block.type === 3 || block.type === 4) {
+                block.hp--;
+                if (block.hp > 0) {
+                    let pColor = block.type === 3 ? '#888' : '#2c3e50';
+                    let snd = block.type === 3 ? 'hit_stone' : 'hit_bedrock';
+                    playSound(snd); createParticles(px, py, pColor, 'stone');
+                    if(navigator.vibrate) navigator.vibrate(block.type===3?30:50);
+                    return;
+                }
+            }
+
+            if(block.hasGold) golds.push({ c: c, r: r, active: true, floatY: 0 });
+            let oldType = block.type;
+            block.type = 0;
+            
+            let color = r === 0 ? '#2ecc71' : stageColors[Math.min(Math.floor(r/100), stageColors.length-1)];
+            if (oldType === 3 || oldType === 4) {
+                playSound('break_stone');
+                createParticles(px, py, oldType===3?'#888':'#2c3e50', 'stone');
+            } else {
+                playSound('heavy_dig'); 
+                createParticles(px, py, color, 'dirt');
+            }
+            if(navigator.vibrate) navigator.vibrate(40);
+        }
+
+        function endGame(isWin) {
+            isPlaying = false; isGameOver = true;
+            let stars = 0;
+            if(maxDepth >= 1000) stars = 3;
+            else if(maxDepth >= 500) stars = 2;
+            else if(maxDepth >= 300) stars = 1;
+
+            let starHTML = '';
+            for(let i=0; i<3; i++) starHTML += i < stars ? '<span class="star-earned">★</span>' : '☆';
+            
+            playSound(isWin ? 'win' : 'death');
+            if(navigator.vibrate) navigator.vibrate(isWin ? [100, 100, 100, 500] : [300, 100, 300]);
+
+            setTimeout(() => {
+                overlay.style.display = 'flex';
+                titleText.innerHTML = isWin ? "MANTLE<br>ESCAPED!" : "GAME OVER";
+                titleText.style.color = isWin ? "#00ffff" : "#ff3333";
+                guideMsg.innerHTML = `You reached: <b>${maxDepth}m</b><br>Gold Collected: <b>${goldCount}</b>`;
+                starDisplay.innerHTML = starHTML;
+                starDisplay.style.display = 'block';
+                startBtn.innerText = "RETRY";
+            }, 1000);
+        }
+
+        function update() {
+            frame++;
+            if (player.r >= 1000 && !isGameOver) { endGame(true); return; }
+
+            if (player.digCooldown > 0) player.digCooldown--;
+            if (player.moveCooldown > 0) player.moveCooldown--;
+            if (player.glowFrame > 0) player.glowFrame--;
+
+            let underRow = getRow(player.r + 1);
+            if (underRow && underRow[player.c].type === 0) {
+                player.isFalling = true;
+                player.yOffset += 12; 
+                if (player.yOffset >= blockSize) {
+                    player.r++; player.yOffset = 0;
+                    if (player.r > maxDepth) { maxDepth = player.r; depthText.innerText = `${maxDepth}m`; }
+                }
+            } else { player.isFalling = false; player.yOffset = 0; }
+
+            if(player.actionFrame > 0) player.actionFrame--;
+
+            let pX = player.c * blockSize + blockSize/2;
+            let pY = player.r * blockSize + player.yOffset + blockSize/2;
+            let lastPt = playerPath[playerPath.length - 1];
+            
+            if (!lastPt || Math.hypot(pX - lastPt.x, pY - lastPt.y) > blockSize * 0.3) {
+                playerPath.push({x: pX, y: pY});
+            }
+
+            if (!worm && maxDepth >= WORM_SPAWN_DEPTH) {
+                playSound('worm_hiss');
+                let spawnIndex = Math.max(0, playerPath.length - 30); 
+                worm = {
+                    x: playerPath[spawnIndex].x, y: playerPath[spawnIndex].y,
+                    pathIndex: spawnIndex, history: [],
+                    color: '#ff00ff', baseSpeed: 1.0 // 초기 속도를 대폭 하향
+                };
+            }
+
+            if (worm) {
+                let target = playerPath[worm.pathIndex];
+                if (!target) target = {x: pX, y: pY}; 
+
+                let dx = target.x - worm.x;
+                let dy = target.y - worm.y;
+                let dist = Math.hypot(dx, dy);
+                
+                // 50m마다 속도 0.15씩 소폭 증가 (난이도 완화)
+                let speedTier = Math.floor(maxDepth / 50);
+                let currentSpeed = worm.baseSpeed + (speedTier * 0.15);
+
+                if (dist <= currentSpeed) {
+                    worm.x = target.x; worm.y = target.y;
+                    if (worm.pathIndex < playerPath.length - 1) worm.pathIndex++;
+                } else {
+                    worm.x += (dx / dist) * currentSpeed;
+                    worm.y += (dy / dist) * currentSpeed;
+                }
+
+                let lastHist = worm.history[0];
+                let segDist = blockSize * 0.15;
+                if (!lastHist || Math.hypot(worm.x - lastHist.x, worm.y - lastHist.y) > segDist) {
+                    worm.history.unshift({x: worm.x, y: worm.y});
+                    if (worm.history.length > WORM_SEGMENTS) worm.history.pop();
+                }
+
+                if (Math.hypot(worm.x - pX, worm.y - pY) < blockSize * 0.5 && !isGameOver) {
+                    createParticles(pX, pY, '#ff0000', 'dirt');
+                    endGame(false);
+                }
+            }
+
+            golds.forEach(g => { if(g.active) g.floatY = Math.sin(frame*0.1)*3; });
+
+            targetCameraY = pY - (height * 0.3);
+            if (targetCameraY < -blockSize) targetCameraY = -blockSize;
+            cameraY += (targetCameraY - cameraY) * 0.15;
+
+            let currentStage = Math.floor(Math.max(0, player.r) / 100);
+            container.style.backgroundColor = player.r < 0 ? '#87CEEB' : stageColors[Math.min(currentStage, stageColors.length-1)];
+
+            for(let i = particles.length-1; i>=0; i--) {
+                let p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.4; p.life -= p.decay;
+                if(p.life <= 0) particles.splice(i, 1);
+            }
+            for(let i = floatingTexts.length-1; i>=0; i--) {
+                let ft = floatingTexts[i]; ft.y += ft.vy; ft.life -= 0.02;
+                if(ft.life <= 0) floatingTexts.splice(i, 1);
+            }
+        }
+
+        function drawMole(x, y) {
+            ctx.save();
+            ctx.translate(x + blockSize/2, y + blockSize/2);
+
+            if (player.glowFrame > 0) {
+                ctx.save();
+                ctx.shadowBlur = 20 + Math.sin(frame * 0.3) * 10;
+                ctx.shadowColor = '#00ffff';
+                ctx.fillStyle = `rgba(0, 255, 255, ${player.glowFrame / 60 * 0.6})`;
+                ctx.beginPath(); ctx.arc(0, 0, blockSize * 0.6, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            }
+
+            let bounce = player.isFalling ? -3 : Math.sin(frame*0.2)*2;
+            ctx.translate(0, bounce);
+
+            let leftHandY = 5; let rightHandY = 5;
+            if(player.actionFrame > 0) {
+                let animOffset = Math.sin((12 - player.actionFrame) * 0.5) * 12;
+                if(player.actionDir === -1) leftHandY -= animOffset; 
+                else if(player.actionDir === 1) rightHandY -= animOffset; 
+                else { leftHandY -= animOffset; rightHandY -= animOffset; } 
+            }
+
+            ctx.fillStyle = '#654321';
+            ctx.beginPath(); ctx.ellipse(0, 5, blockSize*0.35, blockSize*0.4, 0, 0, Math.PI*2); ctx.fill();
+            
+            ctx.save(); ctx.translate(-12, leftHandY);
+            ctx.fillStyle = '#8B4513'; ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#eee'; ctx.fillRect(-4, 4, 2, 6); ctx.fillRect(-1, 5, 2, 6); ctx.fillRect(2, 4, 2, 6);
+            ctx.restore();
+
+            ctx.save(); ctx.translate(12, rightHandY);
+            ctx.fillStyle = '#8B4513'; ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#eee'; ctx.fillRect(-4, 4, 2, 6); ctx.fillRect(-1, 5, 2, 6); ctx.fillRect(2, 4, 2, 6);
+            ctx.restore();
+
+            ctx.fillStyle = '#ffb6c1'; ctx.beginPath(); ctx.arc(0, 10, 5, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(-7, 2, 2.5, 0, Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(7, 2, 2.5, 0, Math.PI*2); ctx.fill();
+
+            ctx.fillStyle = '#ffd700'; ctx.beginPath(); ctx.arc(0, -8, blockSize*0.3, Math.PI, 0); ctx.fill();
+            ctx.fillRect(-blockSize*0.35, -8, blockSize*0.7, 4);
+            ctx.fillStyle = '#fff'; ctx.shadowBlur = 8; ctx.shadowColor = '#fff';
+            ctx.beginPath(); ctx.arc(0, -12, 5, 0, Math.PI*2); ctx.fill(); ctx.shadowBlur = 0;
+
+            ctx.restore();
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+            ctx.save();
+            ctx.translate(0, -cameraY);
+
+            let startRow = Math.floor(cameraY / blockSize) - 1;
+            let endRow = Math.floor((cameraY + height) / blockSize) + 1;
+
+            for (let r = startRow; r <= endRow; r++) {
+                let row = getRow(r);
+                if (!row) continue;
+
+                let stage = Math.floor(r / 100);
+                let baseColor = stageColors[Math.min(stage, stageColors.length - 1)];
+
+                for (let c = 0; c < COLS; c++) {
+                    let block = row[c];
+                    let x = c * blockSize; let y = r * blockSize;
+
+                    if (block.type === 0) {
+                        // 파괴된 길 (가장 밑바닥 배경 + 매우 어두운 오버레이)
+                        ctx.fillStyle = baseColor;
+                        ctx.fillRect(x, y, blockSize, blockSize);
+                        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'; // 확 어둡게 만들어 파놓은 굴 표현
+                        ctx.fillRect(x, y, blockSize, blockSize);
+                        if (texturePattern) {
+                            ctx.fillStyle = texturePattern;
+                            ctx.fillRect(x, y, blockSize, blockSize);
+                        }
+                        // 공간감을 주기 위한 연한 테두리
+                        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                        ctx.strokeRect(x, y, blockSize, blockSize);
+                    } 
+                    else if (block.type > 0) {
+                        // 타일 베이스 색상
+                        if (block.type === 2) ctx.fillStyle = '#8B4513';
+                        else if (!block.isRevealed) ctx.fillStyle = baseColor;
+                        else if (block.type === 3) ctx.fillStyle = '#7f8c8d';
+                        else if (block.type === 4) ctx.fillStyle = '#2c3e50';
+
+                        ctx.fillRect(x, y, blockSize, blockSize);
+
+                        // 텍스쳐 타일맵 적용
+                        if (texturePattern) {
+                            ctx.fillStyle = texturePattern;
+                            ctx.fillRect(x, y, blockSize, blockSize);
+                        }
+
+                        // 블럭별 세부 표현
+                        if (block.type === 2) {
+                            ctx.fillStyle = '#2ecc71'; ctx.fillRect(x, y, blockSize, blockSize * 0.3);
+                        } else if (!block.isRevealed) {
+                            // 베벨(Bevel) 이펙트로 블럭의 입체감 부각
+                            ctx.fillStyle = 'rgba(255,255,255,0.08)'; 
+                            ctx.fillRect(x, y, blockSize, 4); 
+                            ctx.fillRect(x, y, 4, blockSize);
+                            ctx.fillStyle = 'rgba(0,0,0,0.3)'; 
+                            ctx.fillRect(x, y+blockSize-4, blockSize, 4); 
+                            ctx.fillRect(x+blockSize-4, y, 4, blockSize);
+                        } else {
+                            if (block.type === 3) { 
+                                ctx.strokeStyle = '#2c3e50'; ctx.lineWidth = 2;
+                                ctx.beginPath();
+                                if(block.hp <= 2) { ctx.moveTo(x+5, y+5); ctx.lineTo(x+blockSize/2, y+blockSize/2); }
+                                if(block.hp <= 1) { ctx.moveTo(x+blockSize-5, y+10); ctx.lineTo(x+blockSize/2, y+blockSize/2); ctx.lineTo(x+10, y+blockSize-5); }
+                                ctx.stroke();
+                            } else if (block.type === 4) { 
+                                ctx.fillStyle = '#1a252f'; ctx.fillRect(x+5, y+5, blockSize-10, blockSize-10);
+                                ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x+8, y+8, 8, 8); // 금속 광택
+                                ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+                                ctx.beginPath();
+                                if(block.hp <= 7) { ctx.moveTo(x+5, y+5); ctx.lineTo(x+blockSize/2, y+blockSize/2); }
+                                if(block.hp <= 4) { ctx.moveTo(x+blockSize-5, y+10); ctx.lineTo(x+blockSize/2, y+blockSize/2); ctx.lineTo(x+10, y+blockSize-5); }
+                                if(block.hp <= 2) { ctx.moveTo(x+blockSize/2, y+blockSize/2); ctx.lineTo(x+blockSize-5, y+blockSize-5); }
+                                ctx.stroke();
+                            }
+                        }
+
+                        // 블럭 테두리
+                        ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1;
+                        ctx.strokeRect(x, y, blockSize, blockSize);
+                    }
+                }
+            }
+
+            golds.forEach(g => {
+                if(g.active && g.r >= startRow && g.r <= endRow) {
+                    let x = g.c * blockSize + blockSize/2; let y = g.r * blockSize + blockSize/2 + g.floatY;
+                    ctx.save(); ctx.translate(x, y); ctx.shadowBlur = 15; ctx.shadowColor = '#ffd700';
+                    ctx.beginPath(); ctx.moveTo(0, -12); ctx.lineTo(10, 0); ctx.lineTo(0, 12); ctx.lineTo(-10, 0); ctx.closePath();
+                    let grad = ctx.createLinearGradient(0, -12, 0, 12);
+                    grad.addColorStop(0, '#fffbe0'); grad.addColorStop(0.5, '#ffd700'); grad.addColorStop(1, '#cc9900');
+                    ctx.fillStyle = grad; ctx.fill();
+                    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-3, -3, 2, 0, Math.PI*2); ctx.fill();
+                    ctx.restore();
+                }
+            });
+
+            if(!isGameOver) drawMole(player.c * blockSize, player.r * blockSize + player.yOffset);
+
+            if (worm) {
+                ctx.save();
+                let baseRadius = blockSize * 0.3;
+                
+                for(let i = worm.history.length - 1; i >= 0; i--) {
+                    let pt = worm.history[i];
+                    let size = baseRadius * (1 - (i / WORM_SEGMENTS) * 0.4); 
+                    ctx.fillStyle = worm.color;
+                    ctx.beginPath(); ctx.arc(pt.x, pt.y, size, 0, Math.PI*2); ctx.fill();
+                    ctx.strokeStyle = '#aa00aa'; ctx.lineWidth = 1; ctx.stroke();
+                }
+
+                ctx.fillStyle = worm.color;
+                ctx.beginPath(); ctx.arc(worm.x, worm.y, baseRadius*1.1, 0, Math.PI*2); ctx.fill();
+                ctx.strokeStyle = '#aa00aa'; ctx.lineWidth = 2; ctx.stroke();
+
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(worm.x-5, worm.y-5, 4, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(worm.x+5, worm.y-5, 4, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#f00';
+                ctx.beginPath(); ctx.arc(worm.x-5, worm.y-5, 2, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(worm.x+5, worm.y-5, 2, 0, Math.PI*2); ctx.fill();
+                ctx.restore();
+            }
+
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
+            floatingTexts.forEach(ft => {
+                ctx.globalAlpha = Math.max(0, ft.life); ctx.fillStyle = ft.color;
+                ctx.font = '900 22px Arial Black'; ctx.textAlign = 'center';
+                ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+                ctx.fillText(ft.text, ft.x, ft.y); ctx.shadowBlur = 0;
+            });
+            ctx.globalAlpha = 1.0;
+
+            ctx.restore();
+        }
+
+        function loop() {
+            if (isPlaying) update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        startBtn.addEventListener('click', () => {
+            initAudio();
+            if (!texturePattern) initTextures(); // 게임 시작 시 텍스쳐 로드
+            grid.clear(); golds = []; particles = []; floatingTexts = []; 
+            worm = null; playerPath = [];
+            player = { c: 4, r: -1, yOffset: 0, isFalling: false, actionFrame: 0, actionDir: 0, digCooldown: 0, moveCooldown: 0, glowFrame: 0 };
+            upgradeLevel = 0; 
+            cameraY = 0; targetCameraY = 0; goldCount = 0; maxDepth = 0; 
+            depthText.innerText = "0m"; goldText.innerText = "0"; lvText.innerText = "1";
+            getRow(0);
+            overlay.style.display = 'none'; starDisplay.style.display = 'none';
+            isPlaying = true; isGameOver = false;
+        });
+
+        getRow(0); draw(); loop();
+
+    </script>
+</body>
+</html>

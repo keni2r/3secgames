@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SECGAMES: Retrowave Seagull</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body { 
+            margin: 0; padding: 0; overflow: hidden; 
+            background-color: #0b0213; 
+            font-family: 'Press Start 2P', cursive;
+            user-select: none; touch-action: none;
+        }
+        canvas { display: block; margin: auto; }
+        
+        #uiLayer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+        }
+        
+        #hud {
+            position: absolute; top: 20px; width: 100%; text-align: center;
+            color: #fff; text-shadow: 2px 2px 0px #000, 0 0 10px #ff00ff;
+        }
+        #stageText { font-size: 20px; margin-bottom: 8px; color: #00ffff;}
+        #scoreText { font-size: 16px; color: #ffea00; }
+        #targetText { font-size: 12px; color: #aaa; margin-top: 5px; }
+
+        #resultPanel {
+            background: rgba(11, 2, 19, 0.95); padding: 30px;
+            border-radius: 10px; border: 4px solid #00ffff;
+            box-shadow: 0 0 20px #00ffff; text-align: center;
+            color: white; pointer-events: auto;
+            display: flex; flex-direction: column; gap: 20px;
+        }
+        #resultTitle { font-size: 24px; margin: 0; color: #ff00ff; text-shadow: 2px 2px 0px #000; line-height: 1.2;}
+        #resultMessage { font-size: 10px; margin: 0; color: #ddd; line-height: 1.8; text-transform: uppercase; }
+        
+        .stat-line { font-size: 12px; margin: 5px 0; line-height: 1.5; color: #fff;}
+        .highlight { color: #ffea00; }
+
+        .btn {
+            background: #ff00ff; color: #fff; border: 2px solid #fff;
+            padding: 15px 20px; font-size: 12px; font-family: 'Press Start 2P', cursive;
+            cursor: pointer; text-transform: uppercase;
+            box-shadow: 4px 4px 0 #00ffff; transition: all 0.1s;
+            margin-top: 10px;
+        }
+        .btn:active { transform: translate(4px, 4px); box-shadow: 0 0 0 #00ffff; }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="uiLayer">
+    <div id="hud" style="display: none;">
+        <div id="stageText">STAGE 1</div>
+        <div id="scoreText">COINS: 0</div>
+        <div id="targetText">TARGET: 20</div>
+    </div>
+    
+    <div id="resultPanel" style="display: none;">
+        <h1 id="resultTitle">SYSTEM FAILURE</h1>
+        <p id="resultMessage">COLLISION DETECTED</p>
+        <div class="stat-line">STAGE: <span id="resStage" class="highlight"></span></div>
+        <div class="stat-line">COINS: <span id="resScore" class="highlight"></span></div>
+        <button class="btn" onclick="startGame()">RESTART</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    const ui = {
+        hud: document.getElementById('hud'),
+        stageText: document.getElementById('stageText'),
+        scoreText: document.getElementById('scoreText'),
+        targetText: document.getElementById('targetText'),
+        resultPanel: document.getElementById('resultPanel'),
+        resultTitle: document.getElementById('resultTitle'),
+        resultMessage: document.getElementById('resultMessage'),
+        resStage: document.getElementById('resStage'),
+        resScore: document.getElementById('resScore')
+    };
+
+    function resize() {
+        canvas.width = window.innerWidth > 600 ? 600 : window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const pixelSize = 4;
+
+    function parseStr(arr) { return arr.map(r => r.split('').map(c => parseInt(c, 16))); }
+
+    // --- 1. 캐릭터 (16x16, 8프레임 갈매기 사이클) ---
+    const F0 = [
+        "0000000001111100",
+        "0000000113333110",
+        "0111101333333310",
+        "1111113333333100",
+        "0111133332221000",
+        "0001332222221000",
+        "0012211222210000",
+        "0144122222221000",
+        "1444122222222100",
+        "0141222222222211",
+        "0012222222221111",
+        "0001122222111100",
+        "0000011111410000",
+        "0000000000100000",
+        "0000000000000000",
+        "0000000000000000"
+    ];
+    const F1 = [
+        "0000000000000000",
+        "0000000000000000",
+        "0111111111111000",
+        "0011133333331000",
+        "0001333332221000",
+        "0001332222221000",
+        "0012211222210000",
+        "0144122222221000",
+        "1444122222222100",
+        "0141222222222211",
+        "0012222222221111",
+        "0001122222111100",
+        "0000011111410000",
+        "0000000000100000",
+        "0000000000000000",
+        "0000000000000000"
+    ];
+    const F2 = [
+        "0000000000000000",
+        "0000000000000000",
+        "0000000000000000",
+        "0000000000000000",
+        "0111111111111000",
+        "0001333332221000",
+        "0012211222210000",
+        "0144122222221000",
+        "1444122222222100",
+        "0141222222222211",
+        "0012222222221111",
+        "0001122222111100",
+        "0000011111410000",
+        "0000000000100000",
+        "0000000000000000",
+        "0000000000000000"
+    ];
+    const F3 = [
+        "0000000000000000",
+        "0000000000000000",
+        "0000000000000000",
+        "0000000000000000",
+        "0000000000000000",
+        "0000000002221000",
+        "0012211222210000",
+        "0144122222221000",
+        "1444122222222100",
+        "0141222222222211",
+        "0111111222221111",
+        "0011133331111100",
+        "0001113331410000",
+        "0000011110100000",
+        "0000000000000000",
+        "0000000000000000"
+    ];
+    const runFramesStr = [F0, F1, F2, F3, F3, F2, F1, F0];
+    const runAnim = runFramesStr.map(parseStr);
+
+    // --- 2. 비행기 장애물들 ---
+    const planeSmall = parseStr([
+        "000000000000000011110000",
+        "000000000000000111110000",
+        "000011111111111111110000",
+        "001111111111111111111100",
+        "011331313131313111111100",
+        "111331313131313111111100",
+        "222222222222222222220000",
+        "022222222222222222000000",
+        "000000444444000000000000",
+        "000000444444000000000000"
+    ]);
+
+    const planeLarge = parseStr([
+        "00000000000000000000000111000000",
+        "00000000000000000000001111000000",
+        "00000000000000000000011111000000",
+        "00000000011111111111111111111000",
+        "00000111111111111111111111111110",
+        "00111111113313313313311111333111",
+        "22222222222222222222222222222220",
+        "02222222222222222222222222222200",
+        "00000004444444000000000000000000",
+        "00000000055550000000000000000000",
+        "00000000055550000000000000000000"
+    ]);
+
+    const ufoSprite = parseStr([
+        "00000000111100000000",
+        "00000011444411000000",
+        "00001144444444110000",
+        "00111111111111111100",
+        "01111111111111111110",
+        "22222222222222222222",
+        "00330003333000330000",
+        "00220000220000220000"
+    ]);
+
+    // --- 3. 코인 ---
+    const coinSprite = parseStr([
+        "00211200",
+        "02111120",
+        "21211212",
+        "11111111",
+        "11111111",
+        "21211212",
+        "02111120",
+        "00211200"
+    ]);
+
+    // --- 9단계 스테이지 구성 ---
+    const stages = [
+        { target: 20, obsType: planeSmall, oSpeed: 4.5, cSpeed: 4.5, cSpawn: 30, oSpawn: 90, gridCol: "#ff00ff", skyTop: "#1a0b2e", skyBot: "#4b0082" },
+        { target: 25, obsType: planeSmall, oSpeed: 5.0, cSpeed: 5.0, cSpawn: 28, oSpawn: 80, gridCol: "#00ffff", skyTop: "#0f0f2d", skyBot: "#000080" },
+        { target: 30, obsType: planeSmall, oSpeed: 5.5, cSpeed: 5.5, cSpawn: 26, oSpawn: 70, gridCol: "#00ff00", skyTop: "#051a05", skyBot: "#006400" },
+        { target: 35, obsType: planeLarge, oSpeed: 6.0, cSpeed: 6.0, cSpawn: 24, oSpawn: 85, gridCol: "#ff8c00", skyTop: "#2e0f0b", skyBot: "#8b0000" },
+        { target: 40, obsType: planeLarge, oSpeed: 6.5, cSpeed: 6.5, cSpawn: 22, oSpawn: 75, gridCol: "#ff0000", skyTop: "#1a0000", skyBot: "#4a0000" },
+        { target: 45, obsType: planeLarge, oSpeed: 7.0, cSpeed: 7.0, cSpawn: 20, oSpawn: 65, gridCol: "#ffff00", skyTop: "#2e2b0b", skyBot: "#8b8000" },
+        { target: 50, obsType: ufoSprite,  oSpeed: 8.0, cSpeed: 8.0, cSpawn: 18, oSpawn: 60, gridCol: "#bf00ff", skyTop: "#000000", skyBot: "#2b00ff" },
+        { target: 55, obsType: ufoSprite,  oSpeed: 9.0, cSpeed: 9.0, cSpawn: 16, oSpawn: 55, gridCol: "#ffffff", skyTop: "#000000", skyBot: "#222222" },
+        { target: 60, obsType: ufoSprite,  oSpeed: 10.0, cSpeed:10.0, cSpawn: 14, oSpawn: 45, gridCol: "#ff0055", skyTop: "#000000", skyBot: "#110000" }
+    ];
+
+    let state = 'START'; 
+    let frames = 0;
+    let stageScore = 0; 
+    let totalScore = 0;
+    let currentStageIndex = 0;
+    
+    // 히트박스 설정
+    let player = { x: 80, y: canvas.height/2, w: 12*pixelSize, h: 10*pixelSize, vy: 0, jumpTimer: 0 };
+    let obstacles = []; 
+    let coins = [];
+    let particles = [];
+    let bgStars = Array.from({length: 50}, () => ({x: Math.random()*canvas.width, y: Math.random()*(canvas.height*0.5), size: Math.random()*2, speed: Math.random()*0.5+0.1}));
+
+    function drawSprite(sprite, type, x, y, scale = pixelSize) {
+        for (let r = 0; r < sprite.length; r++) {
+            for (let c = 0; c < sprite[r].length; c++) {
+                let p = sprite[r][c];
+                if (p === 0) continue;
+                
+                if (type === 'seagull') {
+                    if(p===1) ctx.fillStyle="#000000";
+                    else if(p===2) ctx.fillStyle="#ffffff"; 
+                    else if(p===3) ctx.fillStyle="#aaaaaa"; 
+                    else if(p===4) ctx.fillStyle="#ff8800"; 
+                } else if (type === 'small') {
+                    if(p===1) ctx.fillStyle="#ffffff";
+                    else if(p===2) ctx.fillStyle="#0000ff";
+                    else if(p===3) ctx.fillStyle="#222222";
+                    else if(p===4) ctx.fillStyle="#888888";
+                } else if (type === 'large') {
+                    if(p===1) ctx.fillStyle="#f5f5dc";
+                    else if(p===2) ctx.fillStyle="#b22222";
+                    else if(p===3) ctx.fillStyle="#222222";
+                    else if(p===4) ctx.fillStyle="#d3d3d3";
+                    else if(p===5) ctx.fillStyle="#a9a9a9";
+                } else if (type === 'ufo') {
+                    if(p===1) ctx.fillStyle="#e0e0e0";
+                    else if(p===2) ctx.fillStyle="#ff00ff"; 
+                    else if(p===3) ctx.fillStyle="#444444";
+                    else if(p===4) ctx.fillStyle="#00ffff"; 
+                } else if (type === 'coin') {
+                    if(p===1) ctx.fillStyle="#ffee00";
+                    else if(p===2) ctx.fillStyle="#ff8800";
+                }
+                ctx.fillRect(x + c * scale, y + r * scale, scale, scale);
+            }
+        }
+    }
+
+    function drawRetroBackground() {
+        let stg = stages[currentStageIndex];
+        
+        let horizonY = canvas.height * 0.55;
+        let grd = ctx.createLinearGradient(0, 0, 0, horizonY);
+        grd.addColorStop(0, stg.skyTop);
+        grd.addColorStop(1, stg.skyBot);
+        ctx.fillStyle = grd;
+        ctx.fillRect(0, 0, canvas.width, horizonY);
+
+        ctx.fillStyle = "#fff";
+        bgStars.forEach(s => {
+            s.x -= s.speed;
+            if(s.x < 0) { s.x = canvas.width; s.y = Math.random() * horizonY; }
+            ctx.fillRect(s.x, s.y, s.size, s.size);
+        });
+
+        ctx.fillStyle = "#050011";
+        ctx.fillRect(0, horizonY, canvas.width, canvas.height - horizonY);
+
+        ctx.strokeStyle = stg.gridCol;
+        ctx.lineWidth = 1.5;
+
+        let vpX = canvas.width / 2;
+        let vpY = horizonY;
+        ctx.beginPath();
+        for(let i = -15; i <= 15; i++) {
+            ctx.moveTo(vpX, vpY);
+            ctx.lineTo(vpX + i * 80, canvas.height);
+        }
+        ctx.stroke();
+
+        let gridSpeed = 0.05;
+        let fOffset = (frames * gridSpeed) % 1;
+        ctx.beginPath();
+        for(let i = 0; i < 15; i++) {
+            let z = i + fOffset;
+            let y = horizonY + Math.pow(z, 2.2) * 1.2;
+            if (y > horizonY && y <= canvas.height) {
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+            }
+        }
+        ctx.stroke();
+
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = stg.gridCol;
+        ctx.beginPath(); ctx.moveTo(0, horizonY); ctx.lineTo(canvas.width, horizonY); ctx.stroke();
+        ctx.shadowBlur = 0;
+    }
+
+    function spawnObstacle() {
+        let stg = stages[currentStageIndex];
+        let obsY = 30 + Math.random() * (canvas.height - 100);
+        let obsTypeStr = currentStageIndex < 3 ? 'small' : (currentStageIndex < 6 ? 'large' : 'ufo');
+        let w = stg.obsType[0].length * pixelSize;
+        let h = stg.obsType.length * pixelSize;
+
+        obstacles.push({
+            x: canvas.width, y: obsY, w: w, h: h,
+            speed: stg.oSpeed, sprite: stg.obsType, typeStr: obsTypeStr
+        });
+    }
+
+    function spawnCoins() {
+        let stg = stages[currentStageIndex];
+        let startY = 50 + Math.random() * (canvas.height - 150);
+        let pattern = Math.floor(Math.random() * 3);
+        
+        if (pattern === 0) { 
+            for(let i=0; i<4; i++) {
+                coins.push({ x: canvas.width + i*35, y: startY, w: 8*pixelSize, h: 8*pixelSize, speed: stg.cSpeed, collected: false });
+            }
+        } else if (pattern === 1) { 
+            for(let i=0; i<6; i++) {
+                // 웨이브 패턴은 스폰될 때 Y값을 결정하고 그 값을 그대로 유지합니다.
+                coins.push({ x: canvas.width + i*30, y: startY + Math.sin(i)*50, w: 8*pixelSize, h: 8*pixelSize, speed: stg.cSpeed, collected: false });
+            }
+        } else { 
+            coins.push({ x: canvas.width, y: startY, w: 8*pixelSize, h: 8*pixelSize, speed: stg.cSpeed, collected: false });
+            coins.push({ x: canvas.width+30, y: startY-30, w: 8*pixelSize, h: 8*pixelSize, speed: stg.cSpeed, collected: false });
+            coins.push({ x: canvas.width+30, y: startY+30, w: 8*pixelSize, h: 8*pixelSize, speed: stg.cSpeed, collected: false });
+            coins.push({ x: canvas.width+60, y: startY, w: 8*pixelSize, h: 8*pixelSize, speed: stg.cSpeed, collected: false });
+        }
+    }
+
+    function update() {
+        if (state !== 'PLAYING') return;
+        frames++;
+
+        let stg = stages[currentStageIndex];
+
+        // 스테이지 클리어 체크
+        if (stageScore >= stg.target) {
+            currentStageIndex++;
+            stageScore = 0; 
+            
+            if (currentStageIndex >= stages.length) {
+                state = 'CLEAR';
+                ui.resultTitle.innerText = "MISSION CLEAR";
+                ui.resultTitle.style.color = "#00ffff";
+                ui.resultMessage.innerText = "ALL COINS COLLECTED!\nSYSTEM HACKED SUCCESSFULLY.";
+                ui.resStage.innerText = "MAX";
+                ui.resScore.innerText = totalScore;
+                ui.resultPanel.style.display = 'flex';
+                ui.hud.style.display = 'none';
+                return;
+            }
+            stg = stages[currentStageIndex];
+            ui.stageText.innerText = `STAGE ${currentStageIndex + 1}`;
+            particles.push({ x: canvas.width/2, y: canvas.height/2, text: "STAGE UP!", life: 60, col: "#00ffff" });
+        }
+        ui.scoreText.innerText = `COINS: ${stageScore}`;
+        ui.targetText.innerText = `TARGET: ${stg.target}`;
+
+        player.vy += 0.55; 
+        player.y += player.vy;
+        if (player.jumpTimer > 0) player.jumpTimer--;
+
+        // 스폰 관리
+        if (frames % stg.oSpawn === 0) spawnObstacle();
+        if (frames % stg.cSpawn === 0) spawnCoins();
+
+        // 장애물 충돌
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+            let obs = obstacles[i];
+            obs.x -= obs.speed;
+
+            let hitboxMargin = 10;
+            if (player.x + hitboxMargin < obs.x + obs.w && player.x + player.w - hitboxMargin > obs.x &&
+                player.y + hitboxMargin < obs.y + obs.h && player.y + player.h - hitboxMargin > obs.y) {
+                gameOver();
+            }
+
+            if (obs.x + obs.w < 0) obstacles.splice(i, 1);
+        }
+
+        // 코인 획득 (X가 프레임마다 변하는 것을 렌더링 수식에 쓰지 않기 때문에 떨림 해결)
+        for (let i = coins.length - 1; i >= 0; i--) {
+            let coin = coins[i];
+            coin.x -= coin.speed;
+
+            if (!coin.collected &&
+                player.x < coin.x + coin.w && player.x + player.w > coin.x &&
+                player.y < coin.y + coin.h && player.y + player.h > coin.y) {
+                
+                stageScore++;
+                totalScore++;
+                coin.collected = true;
+                particles.push({ x: coin.x, y: coin.y, text: "+1", life: 30, col: "#ffea00" });
+            }
+
+            if (coin.x + coin.w < 0 || coin.collected) coins.splice(i, 1);
+        }
+
+        // 파티클
+        for (let i = particles.length - 1; i >= 0; i--) {
+            particles[i].y -= 1.5; particles[i].life--;
+            if (particles[i].life <= 0) particles.splice(i, 1);
+        }
+
+        // 천장/바닥 추락
+        if (player.y + player.h > canvas.height || player.y < -50) {
+            gameOver();
+        }
+    }
+
+    function draw() {
+        drawRetroBackground();
+
+        if (state === 'START') return;
+
+        // 장애물 그리기
+        obstacles.forEach(obs => {
+            drawSprite(obs.sprite, obs.typeStr, obs.x, obs.y);
+        });
+
+        // 흔들림(Jitter) 버그 수정 완료: coin.y 고정 렌더링
+        coins.forEach(coin => {
+            if (!coin.collected) {
+                drawSprite(coinSprite, 'coin', coin.x, coin.y);
+            }
+        });
+
+        // 갈매기 애니메이션 적용 (점프 시 날개 아래로 꺾인 F3 유지)
+        let pSprite;
+        if (player.jumpTimer > 0) {
+            pSprite = runAnim[3]; 
+        } else {
+            pSprite = runAnim[Math.floor((frames % 32) / 4)];
+        }
+        
+        ctx.save();
+        ctx.translate(player.x + player.w/2, player.y + player.h/2);
+        let angle = Math.min(Math.PI / 6, Math.max(-Math.PI / 6, (player.vy * 0.05)));
+        ctx.rotate(angle);
+        drawSprite(pSprite, 'seagull', -player.w/2, -player.h/2);
+        ctx.restore();
+
+        // 파티클
+        ctx.font = "16px 'Press Start 2P'";
+        ctx.textAlign = "center";
+        particles.forEach(p => {
+            ctx.fillStyle = p.col;
+            ctx.fillText(p.text, p.x, p.y);
+        });
+        ctx.textAlign = "left";
+    }
+
+    function jump(e) {
+        if (e && e.type !== 'keydown') e.preventDefault();
+        
+        if (state === 'START') {
+            startGame(); return;
+        }
+        
+        if (state === 'PLAYING') {
+            player.vy = -8.5; 
+            player.jumpTimer = 10; 
+        }
+    }
+
+    window.startGame = function() {
+        player.y = canvas.height / 2;
+        player.vy = 0;
+        obstacles = [];
+        coins = [];
+        particles = [];
+        stageScore = 0;
+        totalScore = 0;
+        frames = 0;
+        currentStageIndex = 0;
+        
+        state = 'PLAYING';
+        ui.resultPanel.style.display = 'none';
+        ui.hud.style.display = 'block';
+        ui.stageText.innerText = `STAGE 1`;
+        ui.scoreText.innerText = `COINS: 0`;
+        ui.targetText.innerText = `TARGET: ${stages[0].target}`;
+    };
+
+    function gameOver() {
+        state = 'GAMEOVER';
+        ui.resultTitle.innerText = "SYSTEM FAILURE";
+        ui.resultTitle.style.color = "#ff00ff";
+        ui.resultMessage.innerText = "COLLISION DETECTED";
+        ui.resStage.innerText = currentStageIndex + 1;
+        ui.resScore.innerText = totalScore;
+        ui.resultPanel.style.display = 'flex';
+        ui.hud.style.display = 'none';
+    }
+
+    function loop() {
+        update();
+        draw();
+        requestAnimationFrame(loop);
+    }
+
+    window.addEventListener('mousedown', jump);
+    window.addEventListener('touchstart', jump, {passive: false});
+    window.addEventListener('keydown', (e) => { if(e.code === 'Space') jump(e); });
+
+    // 시작 대기 화면
+    drawRetroBackground();
+    ctx.fillStyle = "#00ffff";
+    ctx.font = "16px 'Press Start 2P'";
+    ctx.textAlign = "center";
+    ctx.fillText("TAP TO FLY", canvas.width/2, canvas.height/2);
+    ctx.textAlign = "left";
+    
+    loop();
+</script>
+</body>
+</html>
