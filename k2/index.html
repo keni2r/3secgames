@@ -1,1 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Defuse It: 9 Stages</title>
+    <style>
+        :root {
+            --bg-dark: #1e1e24;
+            --bg-red: #c0392b;
+            --bg-green: #27ae60;
+            --btn-blue: #2980b9;
+            --btn-red: #e74c3c;
+            --btn-green: #2ecc71;
+            --btn-gray: #7f8c8d;
+            --text-main: #ecf0f1;
+            --text-warn: #f1c40f;
+        }
+        body { 
+            margin: 0; height: 100vh; display: flex; flex-direction: column; 
+            justify-content: center; align-items: center; 
+            background-color: var(--bg-dark); color: var(--text-main); 
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none; touch-action: manipulation; transition: background-color 0.2s;
+            text-align: center; overflow: hidden;
+        }
+        #top-bar { margin-bottom: 10px; }
+        #stage-text { font-size: 1.5rem; font-weight: bold; color: var(--text-warn); }
+        
+        /* 폭탄 이미지 및 애니메이션 */
+        #bomb-visual { font-size: 5rem; margin: 10px 0; }
+        .tick-tock { animation: pulse 0.5s infinite alternate; }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            100% { transform: scale(1.15); }
+        }
 
+        #timer { font-size: 4.5rem; font-weight: bold; margin: 5px 0; }
+        
+        /* 미션 설명 글자 크기 확대 */
+        #instruction { 
+            font-size: 1.8rem; /* 기존 1.2rem에서 확대 */
+            font-weight: 900; 
+            min-height: 50px; 
+            margin-bottom: 25px; 
+            padding: 0 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        #action-area {
+            display: flex; flex-wrap: wrap; justify-content: center; gap: 15px;
+            width: 90%; max-width: 400px; min-height: 200px; align-items: center;
+        }
+        
+        .btn {
+            padding: 20px 30px; font-size: 1.5rem; font-weight: bold; font-family: inherit;
+            color: white; background-color: var(--btn-gray);
+            border: 4px solid rgba(255,255,255,0.2); border-radius: 10px;
+            cursor: pointer; box-shadow: 0 8px 15px rgba(0,0,0,0.3);
+            transition: transform 0.1s; display: flex; justify-content: center; align-items: center;
+        }
+        .btn:active { transform: scale(0.9); }
+        .btn.red { background-color: var(--btn-red); }
+        .btn.blue { background-color: var(--btn-blue); }
+        .btn.green { background-color: var(--btn-green); }
+        .btn.huge { width: 200px; height: 150px; border-radius: 50%; }
+        .btn.grid { width: 70px; height: 70px; padding: 0; }
+    </style>
+</head>
+<body>
+
+    <div id="top-bar">
+        <div id="stage-text">SYSTEM READY</div>
+        <div id="bomb-visual">💣</div>
+        <div id="timer">0.00</div>
+    </div>
+    
+    <div id="instruction">TAP TO START</div>
+    <div id="action-area">
+        <div class="btn huge" id="start-btn">START</div>
+    </div>
+
+<script>
+    const timerDisplay = document.getElementById('timer');
+    const instructionText = document.getElementById('instruction');
+    const actionArea = document.getElementById('action-area');
+    const stageText = document.getElementById('stage-text');
+    const startBtn = document.getElementById('start-btn');
+    const bombVisual = document.getElementById('bomb-visual');
+
+    let currentStage = 1;
+    let timeLeft = 0;
+    let timerInterval;
+    let isPlaying = false;
+
+    // Stage Variables
+    let tapCount = 0;
+    let sequenceIndex = 1;
+    let wiresLeft = 0;
+    let pinEntered = "";
+
+    startBtn.addEventListener('mousedown', startGame);
+    startBtn.addEventListener('touchstart', startGame);
+
+    function startGame(e) {
+        if(e) e.preventDefault();
+        currentStage = 1;
+        loadStage();
+    }
+
+    function formatTime(time) {
+        return Math.max(0, time).toFixed(2);
+    }
+
+    // checkPlaying 변수를 추가하여 재시작 버튼은 isPlaying 상태를 무시하도록 수정
+    function createBtn(text, colorClass, customClass, onClick, checkPlaying = true) {
+        const btn = document.createElement('div');
+        btn.className = `btn ${colorClass} ${customClass}`;
+        btn.innerText = text;
+        
+        const handler = (e) => {
+            if(e) e.preventDefault();
+            if(!checkPlaying || isPlaying) onClick(btn);
+        };
+        btn.addEventListener('mousedown', handler);
+        btn.addEventListener('touchstart', handler);
+        return btn;
+    }
+
+    function clearBoard() {
+        actionArea.innerHTML = '';
+        tapCount = 0; sequenceIndex = 1; wiresLeft = 0; pinEntered = "";
+    }
+
+    function failGame() {
+        isPlaying = false;
+        clearInterval(timerInterval);
+        document.body.style.backgroundColor = 'var(--bg-red)';
+        stageText.innerText = "MISSION FAILED";
+        timerDisplay.innerText = "BOOM";
+        instructionText.innerText = `FAILED AT STAGE ${currentStage}`;
+        bombVisual.innerText = "💥";
+        bombVisual.classList.remove('tick-tock');
+        
+        clearBoard();
+        // checkPlaying을 false로 설정하여 게임 오버 상태에서도 클릭되게 함
+        const restartBtn = createBtn("RESTART", "red", "huge", startGame, false);
+        actionArea.appendChild(restartBtn);
+    }
+
+    function passStage() {
+        isPlaying = false;
+        clearInterval(timerInterval);
+        bombVisual.classList.remove('tick-tock');
+        
+        if (currentStage >= 9) {
+            // Game Clear
+            document.body.style.backgroundColor = 'var(--bg-green)';
+            stageText.innerText = "MISSION ACCOMPLISHED";
+            timerDisplay.innerText = "SAFE";
+            instructionText.innerText = "ALL BOMBS DEFUSED!";
+            bombVisual.innerText = "🛡️";
+            clearBoard();
+            const restartBtn = createBtn("PLAY AGAIN", "green", "huge", startGame, false);
+            actionArea.appendChild(restartBtn);
+        } else {
+            // Next Stage
+            currentStage++;
+            loadStage();
+        }
+    }
+
+    function startTimer(seconds) {
+        timeLeft = seconds;
+        timerDisplay.innerText = formatTime(timeLeft);
+        isPlaying = true;
+        document.body.style.backgroundColor = 'var(--bg-dark)';
+        bombVisual.innerText = "💣";
+        bombVisual.classList.add('tick-tock');
+        
+        clearInterval(timerInterval);
+        timerInterval = setInterval(() => {
+            timeLeft -= 0.01;
+            timerDisplay.innerText = formatTime(timeLeft);
+            if (timeLeft <= 0) failGame();
+        }, 10);
+    }
+
+    function loadStage() {
+        clearBoard();
+        stageText.innerText = `STAGE ${currentStage} / 9`;
+
+        switch (currentStage) {
+            case 1:
+                instructionText.innerText = "TAP THE BUTTON ONCE";
+                actionArea.appendChild(createBtn("TAP", "blue", "huge", passStage));
+                startTimer(3.0);
+                break;
+            case 2:
+                instructionText.innerText = "TAP 10 TIMES";
+                const btn2 = createBtn("0 / 10", "red", "huge", (btn) => {
+                    tapCount++;
+                    btn.innerText = `${tapCount} / 10`;
+                    if(tapCount >= 10) passStage();
+                });
+                actionArea.appendChild(btn2);
+                startTimer(4.0);
+                break;
+            case 3:
+                instructionText.innerText = "CUT THE BLUE WIRE";
+                actionArea.appendChild(createBtn("RED", "red", "", failGame));
+                actionArea.appendChild(createBtn("GREEN", "green", "", failGame));
+                actionArea.appendChild(createBtn("BLUE", "blue", "", passStage));
+                startTimer(3.0);
+                break;
+            case 4:
+                instructionText.innerText = "TAP IN ORDER: 1 -> 2 -> 3";
+                const order = [2, 1, 3];
+                order.forEach(num => {
+                    actionArea.appendChild(createBtn(num.toString(), "gray", "", () => {
+                        if (num === sequenceIndex) {
+                            sequenceIndex++;
+                            if (sequenceIndex > 3) passStage();
+                        } else {
+                            failGame();
+                        }
+                    }));
+                });
+                startTimer(4.0);
+                break;
+            case 5:
+                instructionText.innerText = "MATH: 5 + 4 = ?";
+                actionArea.appendChild(createBtn("8", "gray", "", failGame));
+                actionArea.appendChild(createBtn("9", "blue", "", passStage));
+                actionArea.appendChild(createBtn("10", "gray", "", failGame));
+                startTimer(4.0);
+                break;
+            case 6:
+                instructionText.innerText = "CUT EVERYTHING EXCEPT RED";
+                wiresLeft = 2;
+                const cutWire = (btn) => {
+                    btn.style.visibility = "hidden";
+                    wiresLeft--;
+                    if(wiresLeft <= 0) passStage();
+                };
+                actionArea.appendChild(createBtn("GREEN", "green", "", cutWire));
+                actionArea.appendChild(createBtn("RED", "red", "", failGame));
+                actionArea.appendChild(createBtn("BLUE", "blue", "", cutWire));
+                startTimer(4.0);
+                break;
+            case 7:
+                instructionText.innerHTML = 'TAP THE WORD <span style="color:var(--btn-red);">"BLUE"</span>';
+                actionArea.appendChild(createBtn("RED", "red", "", failGame));
+                actionArea.appendChild(createBtn("BLUE", "green", "", passStage));
+                actionArea.appendChild(createBtn("GREEN", "blue", "", failGame));
+                startTimer(3.5);
+                break;
+            case 8:
+                instructionText.innerText = "DANGER: TAP 20 TIMES FAST!";
+                const btn8 = createBtn("0 / 20", "red", "huge", (btn) => {
+                    tapCount++;
+                    btn.innerText = `${tapCount} / 20`;
+                    if(tapCount >= 20) passStage();
+                });
+                actionArea.appendChild(btn8);
+                startTimer(3.5);
+                break;
+            case 9:
+                instructionText.innerText = "ENTER PIN: 739";
+                const pinDisplay = document.createElement('div');
+                pinDisplay.style.width = "100%";
+                pinDisplay.style.fontSize = "2.5rem";
+                pinDisplay.style.marginBottom = "10px";
+                pinDisplay.innerText = "_ _ _";
+                actionArea.appendChild(pinDisplay);
+
+                const nums = [1,2,3,4,5,6,7,8,9];
+                nums.forEach(n => {
+                    actionArea.appendChild(createBtn(n.toString(), "gray", "grid", () => {
+                        pinEntered += n;
+                        pinDisplay.innerText = pinEntered.padEnd(3, "_").split("").join(" ");
+                        if(pinEntered.length === 3) {
+                            if(pinEntered === "739") passStage();
+                            else failGame();
+                        }
+                    }));
+                });
+                startTimer(5.0);
+                break;
+        }
+    }
+</script>
+</body>
+</html>
